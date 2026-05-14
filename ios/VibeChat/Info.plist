@@ -55,5 +55,14 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<!-- Firebase Cloud Messaging: required for background push delivery.
+	     TODO: in Xcode, also enable Capabilities → Push Notifications and
+	     Background Modes (Remote notifications). -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<true/>
 </dict>
 </plist>

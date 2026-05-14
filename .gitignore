@@ -73,3 +73,11 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Firebase — NEVER commit these. They contain project-specific credentials.
+android/app/google-services.json
+ios/VibeChat/GoogleService-Info.plist
+firebase/functions/lib/
+firebase/functions/node_modules/
+.firebase/
+.firebaserc

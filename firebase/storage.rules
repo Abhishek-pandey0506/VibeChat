@@ -1,0 +1,55 @@
+rules_version = '2';
+
+// VibeChat Cloud Storage security rules.
+//
+// Layout:
+//   profileImages/{uid}/{file}        — only the owner uploads; everyone signed in can read
+//   chatImages/{roomId}/{uid}/{file}  — only the uploader writes; only room participants read
+//
+// Deploy with: firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function sizeUnder(maxBytes) {
+      return request.resource.size < maxBytes;
+    }
+
+    function isParticipantOfRoom(roomId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/chatRooms/$(roomId))
+        && request.auth.uid in firestore.get(
+             /databases/(default)/documents/chatRooms/$(roomId)
+           ).data.participants;
+    }
+
+    // ─── Profile images ──────────────────────────────────────────────
+    match /profileImages/{uid}/{file=**} {
+      allow read: if isSignedIn();
+      allow write: if isSelf(uid) && isImage() && sizeUnder(5 * 1024 * 1024); // 5 MB
+    }
+
+    // ─── Chat images ─────────────────────────────────────────────────
+    match /chatImages/{roomId}/{uid}/{file=**} {
+      allow read: if isParticipantOfRoom(roomId);
+      allow write: if isSelf(uid)
+                   && isParticipantOfRoom(roomId)
+                   && isImage()
+                   && sizeUnder(10 * 1024 * 1024); // 10 MB
+    }
+
+    // Anything else is denied by default.
+  }
+}
