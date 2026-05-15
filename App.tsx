@@ -15,6 +15,7 @@ import { ChatScreen } from './src/screens/ChatScreen';
 import { NewChatScreen } from './src/screens/NewChatScreen';
 import { CreateGroupScreen } from './src/screens/CreateGroupScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import { UserProfileViewScreen } from './src/screens/UserProfileViewScreen';
 import { GroupProfileScreen } from './src/screens/GroupProfileScreen';
 import { IncomingCallScreen } from './src/screens/IncomingCallScreen';
@@ -59,6 +60,7 @@ type AppRoute =
   | { name: 'newChat' }
   | { name: 'createGroup' }
   | { name: 'profile' }
+  | { name: 'settings' }
   | { name: 'userProfile'; uid: string; prev: AppRoute }
   | { name: 'groupProfile'; roomId: string; prev: AppRoute }
   | { name: 'chat'; roomId: string; title: string; otherUid?: string };
@@ -322,6 +324,12 @@ function AppContent() {
       )}
       {route.name === 'profile' && (
         <ProfileScreen onBack={() => setRoute({ name: 'rooms' })} />
+      )}
+      {route.name === 'settings' && (
+        <SettingsScreen
+          onBack={() => setRoute({ name: 'profile' })}
+          onOpenProfile={() => setRoute({ name: 'profile' })}
+        />
       )}
       {route.name === 'chat' && (
         <ChatScreen

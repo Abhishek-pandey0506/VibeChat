@@ -298,10 +298,13 @@ export async function createGroupRoom(
   creatorUid: string,
   participantUids: string[],
   name: string,
+  photoURL?: string,
 ): Promise<string> {
   const participants = Array.from(new Set([creatorUid, ...participantUids]));
   const unread = Object.fromEntries(participants.map(uid => [uid, 0]));
-  const ref = await firebaseFirestore().collection(COLLECTIONS.CHAT_ROOMS).add({
+  // Only include photoURL when it's present — Firestore rejects `undefined`
+  // on field writes.
+  const doc: Record<string, unknown> = {
     participants,
     isGroup: true,
     name,
@@ -310,7 +313,11 @@ export async function createGroupRoom(
     unread,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
+  if (photoURL) doc.photoURL = photoURL;
+  const ref = await firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .add(doc);
   return ref.id;
 }
 
@@ -540,12 +547,16 @@ export async function sendMessage(input: SendMessageInput): Promise<string> {
 
   // We also update the room preview here for fast UI; the unread counter is
   // bumped by the Cloud Function so security rules can stay strict.
+  // Clearing hiddenBy means a chat that any participant deleted with
+  // "Delete chat" pops back into their list as soon as new activity
+  // happens — same semantics WhatsApp / Instagram use.
   batch.update(roomRef, {
     lastMessage: {
       text: previewText,
       senderId,
       createdAt: serverTimestamp(),
     },
+    hiddenBy: [],
     updatedAt: serverTimestamp(),
   });
 
@@ -623,6 +634,22 @@ export async function unblockUser(myUid: string, otherUid: string): Promise<void
     .collection(COLLECTIONS.USERS)
     .doc(myUid)
     .update({ blockedUsers: arrayRemove(otherUid), updatedAt: serverTimestamp() });
+}
+
+/**
+ * "Delete chat for me" — hides the room from the caller's list without
+ * touching the room for the other participant(s). The room reappears
+ * automatically the next time anyone in the room sends a message
+ * (sendMessage clears `hiddenBy`).
+ */
+export async function hideRoomForUser(
+  roomId: string,
+  uid: string,
+): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .update({ hiddenBy: arrayUnion(uid), updatedAt: serverTimestamp() });
 }
 
 /**

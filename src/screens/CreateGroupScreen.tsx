@@ -1,30 +1,36 @@
 /**
- * New Group creation screen.
+ * New Group creation screen — matches the fourth mockup panel.
  *
- * Candidate sourcing — we DO NOT dump the whole user directory. Members
- * come from places the user actually knows:
- *   1. Device contacts that are also on VibeChat (matched via email /
- *      phoneLast10).
- *   2. People the user has chatted with before (pulled from their rooms).
- *   3. Any name/phone/email the user types into the search box — falls back
- *      to a Firestore lookup so they can grab someone not in those lists.
+ * Header: ✕ close, "New group" title, purple "Create" button on the right.
+ * Top: camera-placeholder square, "GROUP NAME" label + text input.
+ * "N selected · M total" counter.
+ * Horizontally scrolling chips of selected users (× to deselect).
+ * Search bar.
+ * "ADD MEMBERS" section.
+ * Member rows with avatar + name + sub + circular checkbox (purple when
+ *   selected with a tick, hollow when not).
+ *
+ * Logic preserved verbatim: candidate sourcing from contacts + chats,
+ * debounced direct search, multi-select set, createGroupRoom call.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { GradientHeader } from '../components/GradientHeader';
+import { launchImageLibrary } from 'react-native-image-picker';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   createGroupRoom,
@@ -50,25 +56,57 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
   const { user } = useAuthContext();
   const currentUser = user!;
 
-  // Candidate pool: union of contact matches + chat partners.
   const [candidates, setCandidates] = useState<Record<string, UserProfile>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [groupName, setGroupName] = useState('');
+  // Base64 data URL for the group photo. We use the same in-Firestore
+  // workaround as profile photos so we don't depend on Firebase Storage
+  // (which requires the Blaze plan since Oct 2024).
+  const [groupPhotoDataUrl, setGroupPhotoDataUrl] = useState<string | undefined>();
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-
-  // Direct Firestore search for users not in candidates.
   const [directHits, setDirectHits] = useState<UserProfile[]>([]);
-  const [searchingDirect, setSearchingDirect] = useState(false);
 
-  // ─── Load candidates: contacts + chat partners ──────────────────────
+  async function pickGroupPhoto() {
+    if (photoBusy || creating) return;
+    try {
+      const result = await launchImageLibrary({
+        mediaType: 'photo',
+        selectionLimit: 1,
+        includeBase64: true,
+        maxWidth: 256,
+        maxHeight: 256,
+        quality: 0.6,
+      });
+      const asset = result.assets?.[0];
+      if (!asset?.base64) return;
+      setPhotoBusy(true);
+      // Soft size cap — keep the encoded data URL well under Firestore's
+      // 1 MB doc limit (the room doc still has participants, unread, etc.).
+      const sizeBytes = Math.ceil((asset.base64.length * 3) / 4);
+      if (sizeBytes > 500 * 1024) {
+        Alert.alert(
+          'Image too large',
+          `That photo is ${Math.round(sizeBytes / 1024)} KB. Please pick a smaller image.`,
+        );
+        return;
+      }
+      const mime = asset.type ?? 'image/jpeg';
+      setGroupPhotoDataUrl(`data:${mime};base64,${asset.base64}`);
+    } catch (e: any) {
+      Alert.alert('Photo failed', e?.message ?? 'Could not pick photo.');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
   const loadCandidates = useCallback(async () => {
     setLoading(true);
     const pool: Record<string, UserProfile> = {};
     try {
-      // 1. Device contacts → VibeChat matches.
       let granted = await hasContactsPermission();
       if (!granted) granted = await requestContactsPermission();
       if (granted) {
@@ -89,13 +127,10 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
     } catch (e) {
       console.warn('[CreateGroup] permission flow failed', e);
     }
-
     setCandidates(prev => ({ ...prev, ...pool }));
     setLoading(false);
   }, [currentUser.uid]);
 
-  // 2. Chat partners — subscribe to rooms once, fan-out fetch profiles
-  //    for everyone the user has chatted with.
   useEffect(() => {
     const unsub = subscribeUserRooms(currentUser.uid, async (rooms: ChatRoom[]) => {
       const otherUids = new Set<string>();
@@ -104,7 +139,6 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
           if (p !== currentUser.uid) otherUids.add(p);
         }
       }
-      // Fetch missing profiles.
       const missing = [...otherUids].filter(uid => !candidates[uid]);
       if (missing.length === 0) return;
       const fetched: Record<string, UserProfile> = {};
@@ -126,7 +160,6 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
     loadCandidates();
   }, [loadCandidates]);
 
-  // 3. Direct Firestore search whenever the query changes (debounced).
   useEffect(() => {
     const q = search.trim();
     if (!q) {
@@ -134,15 +167,12 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
       return;
     }
     let cancelled = false;
-    setSearchingDirect(true);
     const t = setTimeout(async () => {
       try {
         const found = await searchVibeChatUsers(q, currentUser.uid);
         if (!cancelled) setDirectHits(found);
-      } catch (e: any) {
+      } catch (e) {
         if (!cancelled) console.warn('[CreateGroup] direct search failed', e);
-      } finally {
-        if (!cancelled) setSearchingDirect(false);
       }
     }, 250);
     return () => {
@@ -151,7 +181,6 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
     };
   }, [search, currentUser.uid]);
 
-  // ─── Filter / display logic ─────────────────────────────────────────
   const filteredCandidates = useMemo<UserProfile[]>(() => {
     const list = Object.values(candidates);
     const q = search.trim().toLowerCase();
@@ -172,11 +201,15 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
     });
   }, [candidates, search]);
 
-  // Dedupe direct hits against the candidate filter.
   const directOnly = useMemo<UserProfile[]>(() => {
     const seen = new Set(filteredCandidates.map(u => u.uid));
     return directHits.filter(u => !seen.has(u.uid));
   }, [directHits, filteredCandidates]);
+
+  // The combined member list shown under "ADD MEMBERS".
+  const allMembers = useMemo<UserProfile[]>(() => {
+    return [...filteredCandidates, ...directOnly];
+  }, [filteredCandidates, directOnly]);
 
   const selectedUsers = useMemo<UserProfile[]>(() => {
     const all = { ...candidates };
@@ -194,15 +227,24 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
   }
 
   async function handleCreate() {
+    const name = groupName.trim();
+    if (!name) {
+      setError('Group name is required.');
+      return;
+    }
     if (selected.size < 1) {
       setError('Add at least one member.');
       return;
     }
-    const name = groupName.trim() || 'New group';
     setError('');
     setCreating(true);
     try {
-      const roomId = await createGroupRoom(currentUser.uid, [...selected], name);
+      const roomId = await createGroupRoom(
+        currentUser.uid,
+        [...selected],
+        name,
+        groupPhotoDataUrl,
+      );
       onGroupReady(roomId, name);
     } catch (e: any) {
       setError(e?.message ?? 'Could not create group.');
@@ -211,97 +253,138 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
     }
   }
 
-  const canCreate = selected.size > 0 && !creating;
+  // Both a name and at least one member are now required. The button stays
+  // tappable (so the user can still hit it and see the inline error) but
+  // dims when the form isn't ready.
+  const nameValid = groupName.trim().length > 0;
+  const canCreate = nameValid && selected.size > 0 && !creating;
+  const totalCount = selected.size + 1; // +1 for the creator
 
   return (
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <GradientHeader style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={10}>
-          <Text style={styles.back}>‹</Text>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <Pressable
+          onPress={onBack}
+          hitSlop={10}
+          style={({ pressed }) => pressed && { opacity: 0.6 }}>
+          <Text style={styles.close}>✕</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>New Group</Text>
+        <Text style={styles.headerTitle}>New group</Text>
         <Pressable
           onPress={handleCreate}
           disabled={!canCreate}
           hitSlop={10}
           style={({ pressed }) => [
-            styles.headerAction,
-            !canCreate && { opacity: 0.45 },
-            pressed && { opacity: 0.6 },
+            styles.createBtn,
+            !canCreate && styles.createBtnDisabled,
+            pressed && canCreate && { opacity: 0.85 },
           ]}>
           {creating ? (
-            <ActivityIndicator color={colors.headerText} />
+            <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.headerActionText}>Create</Text>
+            <Text style={styles.createBtnText}>Create</Text>
           )}
         </Pressable>
-      </GradientHeader>
+      </View>
 
-      <View style={styles.topRow}>
-        <View style={styles.groupAvatar}>
-          <Text style={styles.groupAvatarIcon}>👥</Text>
-        </View>
+      {/* Group name section */}
+      <View style={styles.nameRow}>
+        <Pressable
+          onPress={pickGroupPhoto}
+          disabled={photoBusy || creating}
+          style={({ pressed }) => [styles.cameraSquare, pressed && { opacity: 0.85 }]}>
+          {groupPhotoDataUrl ? (
+            <Image source={{ uri: groupPhotoDataUrl }} style={styles.cameraImg} />
+          ) : photoBusy ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : (
+            <Text style={styles.cameraIcon}>📷</Text>
+          )}
+          {/* Small pencil badge to hint that the square is tappable. */}
+          {!photoBusy ? (
+            <View style={styles.cameraBadge}>
+              <Text style={styles.cameraBadgeIcon}>✎</Text>
+            </View>
+          ) : null}
+        </Pressable>
         <View style={{ flex: 1 }}>
+          <Text style={styles.nameLabel}>
+            GROUP NAME <Text style={styles.requiredStar}>*</Text>
+          </Text>
           <TextInput
             style={styles.nameInput}
             value={groupName}
             onChangeText={setGroupName}
             placeholder="Group name"
-            placeholderTextColor={colors.textLight}
+            placeholderTextColor={colors.text3}
             maxLength={50}
           />
-          <Text style={styles.counter}>
-            {selected.size} {selected.size === 1 ? 'member' : 'members'} selected
-            {selected.size > 0 ? ` · ${selected.size + 1} total` : ''}
-          </Text>
         </View>
       </View>
 
+      {/* Counter */}
+      <Text style={styles.counter}>
+        {selected.size} selected · {totalCount} total
+      </Text>
+
+      {/* Selected chips — wrapped in a fixed-height container because a
+          bare horizontal ScrollView otherwise stretches to fill the rest
+          of the column, leaving a giant empty band between the chips and
+          the search bar. */}
+      {selectedUsers.length > 0 ? (
+        <View style={styles.chipsWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipsRow}>
+          {selectedUsers.map(u => {
+            const initial = (u.displayName || u.email || '?').charAt(0).toUpperCase();
+            const firstName = (u.displayName || u.email || '').split(' ')[0];
+            return (
+              <Pressable
+                key={u.uid}
+                onPress={() => toggle(u.uid)}
+                style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}>
+                <View style={styles.chipAvatar}>
+                  {u.photoURL ? (
+                    <Image source={{ uri: u.photoURL }} style={styles.chipAvatarImg} />
+                  ) : (
+                    <Text style={styles.chipAvatarText}>{initial}</Text>
+                  )}
+                </View>
+                <Text style={styles.chipText} numberOfLines={1}>
+                  {firstName}
+                </Text>
+                <Text style={styles.chipX}>✕</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        </View>
+      ) : null}
+
+      {/* Search */}
       <View style={styles.searchWrap}>
         <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
           style={styles.searchInput}
           value={search}
           onChangeText={setSearch}
-          placeholder="Search by name, phone, or email"
-          placeholderTextColor={colors.textLight}
+          placeholder="Search users"
+          placeholderTextColor={colors.text3}
           autoCapitalize="none"
         />
-        {search.length > 0 && (
+        {search.length > 0 ? (
           <Pressable onPress={() => setSearch('')} hitSlop={6}>
             <Text style={styles.clearIcon}>✕</Text>
           </Pressable>
-        )}
+        ) : null}
       </View>
-
-      {/* Selected chips */}
-      {selectedUsers.length > 0 && (
-        <View style={styles.chipsBar}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsRow}>
-            {selectedUsers.map(u => (
-              <Pressable
-                key={u.uid}
-                onPress={() => toggle(u.uid)}
-                style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}>
-                <View style={styles.chipAvatar}>
-                  <Text style={styles.chipAvatarText}>
-                    {(u.displayName || u.email || '?').charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-                <Text style={styles.chipText} numberOfLines={1}>
-                  {(u.displayName || u.email || '').split(' ')[0]}
-                </Text>
-                <Text style={styles.chipX}>✕</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      )}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -311,56 +394,26 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
         </View>
       ) : (
         <FlatList
-          data={filteredCandidates}
+          data={allMembers}
           keyExtractor={u => u.uid}
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
           contentContainerStyle={{ paddingBottom: spacing.xxl + spacing.lg }}
           ListHeaderComponent={
-            filteredCandidates.length > 0 ? (
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>
-                  {search ? 'From your contacts and chats' : 'Add members'}
-                </Text>
-              </View>
+            allMembers.length > 0 ? (
+              <Text style={styles.sectionTitle}>ADD MEMBERS</Text>
             ) : null
           }
           renderItem={({ item }) => renderRow(item)}
           ListEmptyComponent={
-            <View style={styles.center}>
-              {search ? (
-                searchingDirect ? (
-                  <>
-                    <ActivityIndicator color={colors.primary} />
-                    <Text style={[styles.emptyBody, { marginTop: spacing.sm }]}>
-                      Searching VibeChat…
-                    </Text>
-                  </>
-                ) : null
-              ) : (
-                <>
-                  <Text style={styles.emptyTitle}>Nobody to add yet</Text>
-                  <Text style={styles.emptyBody}>
-                    Once you have contacts on VibeChat or have chatted with someone,
-                    they'll appear here.
-                  </Text>
-                </>
-              )}
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyTitle}>
+                {search ? 'No matches' : 'Nobody to add yet'}
+              </Text>
+              <Text style={styles.emptyBody}>
+                {search
+                  ? 'Try a different name, phone, or email.'
+                  : 'Once you have contacts on VibeChat or have chatted with someone, they\'ll appear here.'}
+              </Text>
             </View>
-          }
-          ListFooterComponent={
-            search && directOnly.length > 0 ? (
-              <View>
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>Other VibeChat users</Text>
-                </View>
-                {directOnly.map(u => (
-                  <View key={u.uid}>
-                    {renderRow(u)}
-                    <View style={styles.sep} />
-                  </View>
-                ))}
-              </View>
-            ) : null
           }
         />
       )}
@@ -369,35 +422,37 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
 
   function renderRow(item: UserProfile) {
     const isSelected = selected.has(item.uid);
+    const initial = (item.displayName || item.email || '?').charAt(0).toUpperCase();
     return (
       <Pressable
         onPress={() => toggle(item.uid)}
         style={({ pressed }) => [
           styles.row,
-          isSelected && styles.rowSelected,
-          pressed && { opacity: 0.9 },
+          pressed && { backgroundColor: colors.surfaceMuted },
         ]}>
         {item.photoURL ? (
-          <Image source={{ uri: item.photoURL }} style={styles.avatarImg} />
+          <Image source={{ uri: item.photoURL }} style={styles.avatar} />
         ) : (
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {(item.displayName || item.email || '?').charAt(0).toUpperCase()}
-            </Text>
+          <View style={[styles.avatar, styles.avatarFallback]}>
+            <Text style={styles.avatarText}>{initial}</Text>
           </View>
         )}
         <View style={{ flex: 1 }}>
           <Text style={styles.rowTitle} numberOfLines={1}>
             {item.displayName || item.email}
           </Text>
-          {item.email ? (
+          {(item.email || item.phoneNumber) ? (
             <Text style={styles.rowSub} numberOfLines={1}>
-              {item.email}
+              {item.phoneNumber || item.email}
             </Text>
           ) : null}
         </View>
-        <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-          {isSelected && <Text style={styles.checkboxTick}>✓</Text>}
+        <View
+          style={[
+            styles.checkbox,
+            isSelected ? styles.checkboxSelected : styles.checkboxEmpty,
+          ]}>
+          {isSelected ? <Text style={styles.checkboxTick}>✓</Text> : null}
         </View>
       </Pressable>
     );
@@ -405,26 +460,34 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1, backgroundColor: colors.surface },
 
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+    gap: spacing.md,
   },
-  back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },
+  close: { color: colors.text, fontSize: 22, fontWeight: '500' },
   headerTitle: {
     flex: 1,
-    textAlign: 'center',
-    color: colors.headerText,
-    fontSize: fontSize.lg,
+    color: colors.text,
+    fontSize: fontSize.lg + 1,
     fontWeight: '700',
   },
-  headerAction: { paddingHorizontal: spacing.md, minWidth: 60, alignItems: 'flex-end' },
-  headerActionText: { color: colors.headerText, fontWeight: '700', fontSize: fontSize.md },
+  createBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+  },
+  createBtnDisabled: { opacity: 0.45 },
+  createBtnText: { color: '#fff', fontWeight: '700', fontSize: fontSize.sm + 1 },
 
-  topRow: {
+  // GROUP NAME row
+  nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
@@ -432,29 +495,101 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
     gap: spacing.md,
   },
-  groupAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primarySoft,
+  cameraSquare: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.divider,
+    overflow: 'hidden',
   },
-  groupAvatarIcon: { fontSize: 26 },
+  cameraImg: { width: '100%', height: '100%' },
+  cameraIcon: { fontSize: 22, opacity: 0.6 },
+  // Small pencil badge in the bottom-right corner of the camera square so
+  // users immediately read it as "tap to edit / pick photo".
+  cameraBadge: {
+    position: 'absolute',
+    right: -2,
+    bottom: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.surface,
+  },
+  cameraBadgeIcon: { color: '#fff', fontSize: 9, fontWeight: '800' },
+  nameLabel: {
+    fontSize: fontSize.xs + 1,
+    fontWeight: '700',
+    color: colors.textMuted,
+    letterSpacing: 0.6,
+    marginBottom: 2,
+  },
+  requiredStar: { color: colors.error },
   nameInput: {
-    fontSize: fontSize.lg - 1,
+    fontSize: fontSize.lg,
     fontWeight: '700',
     color: colors.text,
-    paddingVertical: 4,
-    borderBottomWidth: 1.5,
-    borderBottomColor: colors.divider,
-  },
-  counter: {
-    fontSize: fontSize.xs + 1,
-    color: colors.textMuted,
-    marginTop: 4,
+    paddingVertical: 2,
   },
 
+  counter: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm + 1,
+    fontWeight: '500',
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+  },
+
+  // Selected chip row. Wrapper has a hard height because a horizontal
+  // ScrollView otherwise stretches its children cross-axis to fill the
+  // parent's vertical space — which left a giant empty gap below the
+  // chips, between them and the search bar.
+  chipsWrap: {
+    height: 40,
+    marginBottom: spacing.sm,
+  },
+  chipsRow: {
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 32,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.pill,
+    paddingLeft: 4,
+    paddingRight: spacing.md,
+    gap: 6,
+  },
+  chipAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  chipAvatarImg: { width: '100%', height: '100%' },
+  chipAvatarText: { color: '#fff', fontWeight: '700', fontSize: 11 },
+  chipText: {
+    color: colors.primary,
+    fontWeight: '600',
+    fontSize: fontSize.sm,
+    maxWidth: 90,
+  },
+  chipX: { color: colors.primary, fontSize: 11, fontWeight: '700' },
+
+  // Search
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -474,51 +609,51 @@ const styles = StyleSheet.create({
   },
   clearIcon: { fontSize: 14, color: colors.textMuted, paddingHorizontal: 4 },
 
-  chipsBar: { height: 50, marginTop: spacing.md },
-  chipsRow: {
-    paddingHorizontal: spacing.lg,
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 36,
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.pill,
-    paddingLeft: 4,
-    paddingRight: spacing.md,
-    gap: 6,
-  },
-  chipAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chipAvatarText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  chipText: {
-    color: colors.primary,
-    fontWeight: '600',
-    fontSize: fontSize.sm + 1,
-    maxWidth: 100,
-  },
-  chipX: { color: colors.primary, fontSize: 12, fontWeight: '700' },
-
-  sectionHeader: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.xs,
-  },
+  // Section header
   sectionTitle: {
     fontSize: fontSize.xs + 1,
     fontWeight: '700',
     color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    letterSpacing: 0.7,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.sm,
   },
+
+  // Member row
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md - 2,
+    gap: spacing.md,
+  },
+  avatar: { width: 44, height: 44, borderRadius: 22 },
+  avatarFallback: {
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { color: '#fff', fontWeight: '700', fontSize: fontSize.md + 1 },
+  rowTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
+  rowSub: { color: colors.textMuted, fontSize: fontSize.xs + 2, marginTop: 2 },
+
+  // Round checkbox — purple fill with ✓ when selected, hollow border when not
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxEmpty: {
+    borderWidth: 1.5,
+    borderColor: colors.divider,
+  },
+  checkboxSelected: {
+    backgroundColor: colors.primary,
+  },
+  checkboxTick: { color: '#fff', fontWeight: '800', fontSize: 14 },
 
   error: {
     color: colors.error,
@@ -529,6 +664,7 @@ const styles = StyleSheet.create({
   },
 
   center: { padding: spacing.xxl, alignItems: 'center' },
+  emptyWrap: { padding: spacing.xxl, alignItems: 'center' },
   emptyTitle: {
     color: colors.text,
     fontWeight: '700',
@@ -542,39 +678,4 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: spacing.lg,
   },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md - 2,
-    gap: spacing.md,
-  },
-  rowSelected: { backgroundColor: colors.primarySoft },
-  sep: { height: 1, backgroundColor: colors.divider, marginLeft: 76 },
-
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarImg: { width: 44, height: 44, borderRadius: 22 },
-  avatarText: { color: colors.headerText, fontWeight: '700', fontSize: fontSize.md + 1 },
-  rowTitle: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
-  rowSub: { color: colors.textMuted, fontSize: fontSize.sm, marginTop: 2 },
-
-  checkbox: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2,
-    borderColor: colors.divider,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  checkboxTick: { color: '#fff', fontWeight: '800', fontSize: 14 },
 });

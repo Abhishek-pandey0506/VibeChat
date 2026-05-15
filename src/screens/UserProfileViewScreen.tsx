@@ -1,9 +1,3 @@
-/**
- * Read-only view of another user's profile, opened from the chat header.
- * Shows their avatar, name, presence, contact info, and a Block/Unblock
- * button. Cannot edit anything else — that's the owner's ProfileScreen.
- */
-
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -32,9 +26,18 @@ import type { UserProfile } from '../types/models';
 interface Props {
   otherUid: string;
   onBack: () => void;
+  onMessage?: () => void;
+  onCall?: () => void;
+  onVideoCall?: () => void;
 }
 
-export function UserProfileViewScreen({ otherUid, onBack }: Props) {
+export function UserProfileViewScreen({
+  otherUid,
+  onBack,
+  onMessage,
+  onCall,
+  onVideoCall,
+}: Props) {
   const { user } = useAuthContext();
   const currentUser = user!;
 
@@ -46,6 +49,7 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
   });
   const [block, setBlock] = useState({ iBlocked: false, theyBlocked: false });
   const [busy, setBusy] = useState(false);
+  const [muted, setMuted] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,15 +65,11 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
     };
   }, [otherUid]);
 
-  useEffect(() => {
-    const u = subscribeUserPresence(otherUid, setPresence);
-    return u;
-  }, [otherUid]);
-
-  useEffect(() => {
-    const u = subscribeBlockRelation(currentUser.uid, otherUid, setBlock);
-    return u;
-  }, [currentUser.uid, otherUid]);
+  useEffect(() => subscribeUserPresence(otherUid, setPresence), [otherUid]);
+  useEffect(
+    () => subscribeBlockRelation(currentUser.uid, otherUid, setBlock),
+    [currentUser.uid, otherUid],
+  );
 
   async function toggleBlock() {
     if (busy) return;
@@ -122,17 +122,30 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
   }
 
   const presenceLabel = presence.online
-    ? 'online'
-    : formatLastSeen(presence.lastSeenMs) ?? 'offline';
+    ? 'Active now'
+    : `Active ${formatLastSeen(presence.lastSeenMs) ?? 'recently'}`;
+
+  const initials = (profile.displayName || profile.email || '?')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(s => s.charAt(0).toUpperCase())
+    .join('') || '?';
+
+  const handle = `@${(profile.displayName || (profile.email ?? '').split('@')[0] || 'user')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')}`;
 
   return (
     <View style={styles.flex}>
       <GradientHeader style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={10}>
+        <Pressable onPress={onBack} hitSlop={10} style={styles.headerBtn}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Profile</Text>
-        <View style={{ width: 28 }} />
+        <Text style={styles.headerTitle}>Contact</Text>
+        <Pressable hitSlop={10} style={styles.headerBtn}>
+          <Text style={styles.headerIcon}>✎</Text>
+        </Pressable>
       </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body}>
@@ -143,16 +156,16 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
             <Image source={{ uri: profile.photoURL }} style={styles.avatar} />
           ) : (
             <View style={[styles.avatar, styles.avatarFallback]}>
-              <Text style={styles.avatarLetter}>
-                {(profile.displayName || profile.email || '?').charAt(0).toUpperCase()}
-              </Text>
+              <Text style={styles.avatarLetter}>{initials}</Text>
             </View>
           )}
           {presence.online && <View style={styles.onlineDot} />}
         </View>
 
         <Text style={styles.name}>{profile.displayName || 'VibeChat user'}</Text>
-        <Text style={styles.presence}>{presenceLabel}</Text>
+        <Text style={styles.presence}>
+          {handle} • {presenceLabel}
+        </Text>
 
         {block.theyBlocked && (
           <View style={styles.warnRow}>
@@ -160,12 +173,44 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
           </View>
         )}
 
+        <View style={styles.actionsRow}>
+          <ActionButton icon="💬" label="Message" onPress={onMessage} />
+          <ActionButton icon="📞" label="Call" onPress={onCall} />
+          <ActionButton icon="🎥" label="Video" onPress={onVideoCall} />
+          <ActionButton
+            icon={muted ? '🔕' : '🔔'}
+            label="Mute"
+            onPress={() => setMuted(m => !m)}
+            active={muted}
+          />
+        </View>
+
         <View style={styles.infoCard}>
+          {profile.phoneNumber ? (
+            <Pressable
+              onPress={() => Linking.openURL(`tel:${profile.phoneNumber}`)}
+              style={({ pressed }) => [styles.infoRow, pressed && { opacity: 0.7 }]}>
+              <View style={styles.infoIconWrap}>
+                <Text style={styles.infoIcon}>📱</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoLabel}>Phone</Text>
+                <Text style={styles.infoValue} numberOfLines={1}>
+                  {profile.phoneNumber}
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
+
+          {profile.phoneNumber && profile.email ? <View style={styles.sep} /> : null}
+
           {profile.email ? (
             <Pressable
               onPress={() => Linking.openURL(`mailto:${profile.email}`)}
               style={({ pressed }) => [styles.infoRow, pressed && { opacity: 0.7 }]}>
-              <Text style={styles.infoIcon}>✉️</Text>
+              <View style={styles.infoIconWrap}>
+                <Text style={styles.infoIcon}>✉️</Text>
+              </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.infoLabel}>Email</Text>
                 <Text style={styles.infoValue} numberOfLines={1}>
@@ -174,22 +219,18 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
               </View>
             </Pressable>
           ) : null}
-          {profile.phoneNumber ? (
-            <>
-              <View style={styles.sep} />
-              <Pressable
-                onPress={() => Linking.openURL(`tel:${profile.phoneNumber}`)}
-                style={({ pressed }) => [styles.infoRow, pressed && { opacity: 0.7 }]}>
-                <Text style={styles.infoIcon}>📱</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.infoLabel}>Phone</Text>
-                  <Text style={styles.infoValue} numberOfLines={1}>
-                    {profile.phoneNumber}
-                  </Text>
-                </View>
-              </Pressable>
-            </>
-          ) : null}
+
+          <View style={styles.sep} />
+
+          <View style={styles.infoRow}>
+            <View style={styles.infoIconWrap}>
+              <Text style={styles.infoIcon}>🔒</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.infoLabel}>Encryption</Text>
+              <Text style={styles.infoValue}>End-to-end</Text>
+            </View>
+          </View>
         </View>
 
         <Pressable
@@ -197,19 +238,14 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
           disabled={busy}
           style={({ pressed }) => [
             styles.blockBtn,
-            block.iBlocked ? styles.unblockBtn : styles.blockBtnDanger,
             pressed && { opacity: 0.85 },
             busy && { opacity: 0.6 },
           ]}>
           {busy ? (
-            <ActivityIndicator color={block.iBlocked ? colors.primary : '#fff'} />
+            <ActivityIndicator color={colors.error} />
           ) : (
-            <Text
-              style={[
-                styles.blockBtnText,
-                block.iBlocked ? styles.unblockBtnText : styles.blockBtnTextDanger,
-              ]}>
-              {block.iBlocked ? 'Unblock user' : 'Block user'}
+            <Text style={styles.blockBtnText}>
+              ⊘  {block.iBlocked ? 'Unblock contact' : 'Block contact'}
             </Text>
           )}
         </Pressable>
@@ -224,23 +260,53 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
   );
 }
 
-const AVATAR_SIZE = 120;
+function ActionButton({
+  icon,
+  label,
+  onPress,
+  active,
+}: {
+  icon: string;
+  label: string;
+  onPress?: () => void;
+  active?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}>
+      <View style={[styles.actionIconCircle, active && styles.actionIconCircleActive]}>
+        <Text style={styles.actionIcon}>{icon}</Text>
+      </View>
+      <Text style={styles.actionLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+const AVATAR_SIZE = 110;
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl },
   errorText: { color: colors.textMuted, marginBottom: spacing.lg },
-  backCta: { paddingHorizontal: spacing.xl, paddingVertical: spacing.md, backgroundColor: colors.primary, borderRadius: radius.md },
+  backCta: {
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.primary,
+    borderRadius: radius.md,
+  },
   backCtaText: { color: colors.textOnPrimary, fontWeight: '700' },
 
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.md + 2,
     zIndex: 2,
   },
-  back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },
+  headerBtn: { width: 36, alignItems: 'center' },
+  back: { color: colors.headerText, fontSize: 32, lineHeight: 32, fontWeight: '500' },
+  headerIcon: { color: colors.headerText, fontSize: 18 },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
@@ -256,24 +322,22 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 120,
-    backgroundColor: colors.headerDark,
+    height: 110,
+    backgroundColor: 'transparent',
   },
 
-  avatarWrap: { marginTop: 56, position: 'relative' },
+  avatarWrap: { marginTop: spacing.xl, position: 'relative' },
   avatar: {
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
-    borderWidth: 4,
-    borderColor: colors.bg,
   },
   avatarFallback: {
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarLetter: { color: colors.headerText, fontSize: 48, fontWeight: '800' },
+  avatarLetter: { color: colors.primary, fontSize: 40, fontWeight: '800' },
   onlineDot: {
     position: 'absolute',
     bottom: 4,
@@ -307,10 +371,36 @@ const styles = StyleSheet.create({
   },
   warnText: { color: colors.error, fontSize: fontSize.sm, fontWeight: '600' },
 
-  infoCard: {
-    width: '100%',
-    paddingHorizontal: spacing.lg,
+  actionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignSelf: 'stretch',
     marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
+  actionBtn: { alignItems: 'center', gap: 6, flex: 1 },
+  actionIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionIconCircleActive: { backgroundColor: colors.primary },
+  actionIcon: { fontSize: 22 },
+  actionLabel: { color: colors.text2, fontSize: fontSize.xs + 1, fontWeight: '600' },
+
+  infoCard: {
+    alignSelf: 'stretch',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.xl,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.divider,
   },
   infoRow: {
     flexDirection: 'row',
@@ -318,16 +408,22 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     gap: spacing.md,
   },
-  infoIcon: { fontSize: 18, width: 24, textAlign: 'center' },
+  infoIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoIcon: { fontSize: 16 },
   infoLabel: {
     color: colors.textMuted,
     fontSize: fontSize.xs + 1,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontWeight: '500',
   },
-  infoValue: { color: colors.text, fontSize: fontSize.md, marginTop: 2 },
-  sep: { height: 1, backgroundColor: colors.divider, marginLeft: spacing.xl + spacing.sm },
+  infoValue: { color: colors.text, fontSize: fontSize.md, marginTop: 2, fontWeight: '500' },
+  sep: { height: 1, backgroundColor: colors.divider, marginLeft: 36 + spacing.md },
 
   blockBtn: {
     marginTop: spacing.xl,
@@ -337,21 +433,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     alignItems: 'center',
     alignSelf: 'stretch',
+    borderWidth: 1.5,
+    borderColor: colors.error,
+    backgroundColor: '#fff',
   },
-  blockBtnDanger: { backgroundColor: colors.error },
-  blockBtnText: { fontWeight: '700', fontSize: fontSize.md + 1 },
-  blockBtnTextDanger: { color: '#fff' },
-  unblockBtn: {
-    backgroundColor: colors.primarySoft,
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  unblockBtnText: { color: colors.primary },
+  blockBtnText: { color: colors.error, fontWeight: '700', fontSize: fontSize.md + 1 },
+
   blockHint: {
     color: colors.textLight,
     fontSize: fontSize.xs + 1,
     textAlign: 'center',
     paddingHorizontal: spacing.xl,
-    marginTop: spacing.sm,
+    marginTop: spacing.sm + 2,
   },
 });

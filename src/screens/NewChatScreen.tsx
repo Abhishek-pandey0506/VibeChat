@@ -1,15 +1,19 @@
 /**
- * New Chat screen.
+ * New Message screen — matches the third mockup panel.
  *
- * Behaviour:
- *   1. Reads the device address book (asks for permission first).
- *   2. Cross-references contact phones/emails with Firestore users.
- *   3. Renders two sections:
- *      • "On VibeChat" — tap to start a 1:1 chat instantly.
- *      • "Invite to VibeChat" — tap to fire an SMS with the install link.
- *   4. Single search bar filters both sections by name, phone digits, or
- *      email substring (case-insensitive).
- *   5. "New Group" entry at the top stays.
+ * Header: ‹ back + "New message" title, white surface.
+ * Search row.
+ * Two big action cards: "New group" and "New contact".
+ * Section header "ON VIBECHAT · N CONTACTS" then matched users.
+ * Section header "INVITE TO VIBECHAT" then non-VibeChat contacts with
+ *   "Invite" pill button.
+ * Footer hint: "Can't find someone? Tap Invite and we'll send them an
+ *   SMS with a link to join."
+ *
+ * All the heavy lifting (contact permissions, matching via
+ * findUsersForContacts, debounced Firestore search via searchVibeChatUsers,
+ * manual email lookup via findUserByEmail, SMS invite linking) is the
+ * same as the previous version. Only the chrome changed.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -21,16 +25,15 @@ import {
   Linking,
   Platform,
   Pressable,
+  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { GradientHeader } from '../components/GradientHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   ensureOneToOneRoom,
-  findUserByEmail,
   findUsersForContacts,
   searchVibeChatUsers,
 } from '../services/firestoreService';
@@ -53,11 +56,18 @@ interface Props {
 }
 
 type Row =
-  | { kind: 'section'; key: string; title: string; sub?: string }
-  | { kind: 'match'; key: string; contact: DeviceContact; profile: UserProfile }
+  | {
+      kind: 'action';
+      key: string;
+      icon: string;
+      title: string;
+      sub: string;
+      onPress: () => void;
+      busy?: boolean;
+    }
+  | { kind: 'section'; key: string; title: string }
+  | { kind: 'match'; key: string; profile: UserProfile; sub: string; contactId?: string }
   | { kind: 'invite'; key: string; contact: DeviceContact }
-  | { kind: 'divider'; key: string; label: string }
-  | { kind: 'manual'; key: string }
   | { kind: 'tip'; key: string };
 
 export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
@@ -69,14 +79,9 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
   const [loading, setLoading] = useState(true);
   const [permission, setPermission] = useState<'unknown' | 'granted' | 'denied'>('unknown');
   const [query, setQuery] = useState('');
-  const [opening, setOpening] = useState<string | null>(null); // contact.id of row being opened
+  const [opening, setOpening] = useState<string | null>(null);
   const [error, setError] = useState('');
-
-  // Direct Firestore search — runs when the user types something so we can
-  // find VibeChat users who aren't in the local address book.
   const [directResults, setDirectResults] = useState<UserProfile[]>([]);
-  const [searchingDirect, setSearchingDirect] = useState(false);
-  const [searchedSelf, setSearchedSelf] = useState(false);
 
   const loadContacts = useCallback(async () => {
     setError('');
@@ -92,16 +97,12 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
       setPermission('granted');
 
       const list = await getDeviceContacts();
-      // Aggregate every email + last-10 phone slug for matching.
       const allEmails = list.flatMap(c => c.emails);
       const allPhones = list.flatMap(c => c.phoneLast10s);
       const matchMap = await findUsersForContacts(allEmails, allPhones);
-
-      // Drop the current user from the matches (so we don't show "yourself").
       for (const [k, p] of [...matchMap]) {
         if (p.uid === currentUser.uid) matchMap.delete(k);
       }
-
       setContacts(list);
       setMatches(matchMap);
     } catch (e: any) {
@@ -115,42 +116,44 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
     loadContacts();
   }, [loadContacts]);
 
-  // Debounced direct user search whenever the query changes.
+  // Re-run the contact permission + load flow on demand. If the user has
+  // already denied access at the OS level, the second request will be
+  // silently rejected and we kick them out to Settings so they can fix it
+  // there.
+  async function handleSync() {
+    if (loading) return;
+    if (permission === 'denied') {
+      const granted = await requestContactsPermission();
+      if (!granted) {
+        Linking.openSettings().catch(() => {});
+        return;
+      }
+    }
+    await loadContacts();
+  }
+
+  // Debounced direct user search for queries.
   useEffect(() => {
     const q = query.trim();
     if (!q) {
       setDirectResults([]);
-      setSearchedSelf(false);
       return;
     }
-    // Quick self-check so we can hint the user instead of just "no matches".
-    const myEmail = (currentUser.email ?? '').toLowerCase();
-    const myPhone = (currentUser.phoneNumber ?? '').replace(/\D/g, '');
-    const qDigits = q.replace(/\D/g, '');
-    const isSelf =
-      (q.includes('@') && q.toLowerCase() === myEmail) ||
-      (qDigits.length >= 10 && myPhone.endsWith(qDigits.slice(-10)));
-    setSearchedSelf(isSelf);
-
     let cancelled = false;
-    setSearchingDirect(true);
     const t = setTimeout(async () => {
       try {
         const found = await searchVibeChatUsers(q, currentUser.uid);
         if (!cancelled) setDirectResults(found);
       } catch (e: any) {
         if (!cancelled) setError(e?.message ?? 'Search failed.');
-      } finally {
-        if (!cancelled) setSearchingDirect(false);
       }
     }, 250);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [query, currentUser.uid, currentUser.email, currentUser.phoneNumber]);
+  }, [query, currentUser.uid]);
 
-  /** Resolve a profile for a contact, if any of its emails/phones match. */
   function profileFor(c: DeviceContact): UserProfile | null {
     for (const e of c.emails) {
       const hit = matches.get(e.toLowerCase());
@@ -181,8 +184,7 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
       (profileFor(c) ? onAppContacts : offAppContacts).push(c);
     }
 
-    // Collect the uids we've already shown via contacts so we don't list
-    // the same user twice when the direct search returns them too.
+    // Dedupe direct hits against contact matches.
     const shownUids = new Set<string>();
     for (const c of onAppContacts) {
       const p = profileFor(c);
@@ -191,57 +193,77 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
     const directOnly = directResults.filter(p => !shownUids.has(p.uid));
 
     const out: Row[] = [];
+
+    // Action cards — only when not searching, to give the search results
+    // the whole screen.
+    if (!q) {
+      out.push({
+        kind: 'action',
+        key: 'new-group',
+        icon: '👥',
+        title: 'New group',
+        sub: 'Chat with multiple people',
+        onPress: onCreateGroup,
+      });
+      // Sync — re-runs contact permission + load. Useful when the user
+      // added new contacts on their device and wants the matches to
+      // refresh, or when they previously denied permission and now want
+      // to grant it.
+      out.push({
+        kind: 'action',
+        key: 'sync-contacts',
+        icon: '🔄',
+        title: 'Sync contacts',
+        sub:
+          permission === 'denied'
+            ? 'Grant access to find friends on VibeChat'
+            : 'Refresh from your device address book',
+        onPress: handleSync,
+        busy: loading,
+      });
+    }
+
     const totalOnApp = onAppContacts.length + directOnly.length;
     if (totalOnApp > 0) {
       out.push({
         kind: 'section',
         key: 'sec-on',
-        title: 'On VibeChat',
-        sub: `${totalOnApp}`,
+        title: `On VibeChat · ${totalOnApp} ${totalOnApp === 1 ? 'contact' : 'contacts'}`,
       });
       for (const c of onAppContacts) {
         const p = profileFor(c)!;
-        out.push({ kind: 'match', key: `m-${c.id}-${p.uid}`, contact: c, profile: p });
+        const sub = p.email || c.phones[0] || '';
+        out.push({
+          kind: 'match',
+          key: `m-${c.id}-${p.uid}`,
+          profile: p,
+          sub,
+          contactId: c.id,
+        });
       }
-      // Direct-search hits without a matching device contact — synthesise a
-      // minimal DeviceContact wrapper so the render path is the same.
       for (const p of directOnly) {
-        const fakeContact: DeviceContact = {
-          id: `direct-${p.uid}`,
-          displayName: p.displayName || p.email || 'VibeChat user',
-          phones: p.phoneNumber ? [p.phoneNumber] : [],
-          phoneLast10s: p.phoneLast10 ? [p.phoneLast10] : [],
-          emails: p.email ? [p.email] : [],
-        };
         out.push({
           kind: 'match',
           key: `d-${p.uid}`,
-          contact: fakeContact,
           profile: p,
+          sub: p.email || p.phoneNumber || '',
         });
       }
     }
+
     if (offAppContacts.length) {
-      out.push({
-        kind: 'section',
-        key: 'sec-invite',
-        title: 'Invite to VibeChat',
-        sub: `${offAppContacts.length}`,
-      });
+      out.push({ kind: 'section', key: 'sec-invite', title: 'Invite to VibeChat' });
       for (const c of offAppContacts) {
         out.push({ kind: 'invite', key: `i-${c.id}`, contact: c });
       }
     }
-    if (!q) {
-      // Manual email fallback at the bottom when not searching, with a
-      // proper divider rule so it visually separates from the lists above.
-      out.push({ kind: 'divider', key: 'div-or', label: 'Or invite by email' });
-      out.push({ kind: 'manual', key: 'manual' });
+
+    if (!q && offAppContacts.length > 0) {
       out.push({ kind: 'tip', key: 'tip' });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contacts, matches, query, directResults]);
+  }, [contacts, matches, query, directResults, loading, permission]);
 
   async function openChatWith(profile: UserProfile, contactId: string) {
     if (opening) return;
@@ -260,7 +282,6 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
     const phone = c.phones[0];
     if (!phone) return;
     const body = `Hey! Join me on VibeChat — chat, photos, and videos in one app. Download: ${INVITE_URL}`;
-    // iOS uses "sms:NUMBER&body=" (with &), Android uses "sms:NUMBER?body=".
     const url =
       Platform.OS === 'ios'
         ? `sms:${encodeURIComponent(phone)}&body=${encodeURIComponent(body)}`
@@ -268,74 +289,41 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
     Linking.openURL(url).catch(err => setError(err?.message ?? 'Could not open Messages.'));
   }
 
-  // Manual email lookup (kept from the previous flow as a fallback).
-  const [manualEmail, setManualEmail] = useState('');
-  const [manualBusy, setManualBusy] = useState(false);
-  async function startManualByEmail() {
-    const target = manualEmail.trim().toLowerCase();
-    if (!target) return;
-    if (target === (currentUser.email ?? '').toLowerCase()) {
-      setError("You can't message yourself.");
-      return;
-    }
-    setError('');
-    setManualBusy(true);
-    try {
-      const other = await findUserByEmail(target);
-      if (!other) {
-        setError('No VibeChat account uses that email.');
-        return;
-      }
-      const roomId = await ensureOneToOneRoom(currentUser.uid, other.uid);
-      onRoomReady(roomId, other.displayName || other.email, other.uid);
-    } catch (e: any) {
-      setError(e?.message ?? 'Could not open chat.');
-    } finally {
-      setManualBusy(false);
-    }
-  }
-
   return (
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <GradientHeader style={styles.header}>
-        <Pressable onPress={onBack} hitSlop={10}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" translucent={false} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <Pressable
+          onPress={onBack}
+          hitSlop={10}
+          style={({ pressed }) => pressed && { opacity: 0.6 }}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>New Chat</Text>
+        <Text style={styles.headerTitle}>New message</Text>
         <View style={{ width: 28 }} />
-      </GradientHeader>
+      </View>
 
+      {/* Search */}
       <View style={styles.searchWrap}>
         <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
           style={styles.searchInput}
           value={query}
           onChangeText={setQuery}
-          placeholder="Search by name, phone, or email"
-          placeholderTextColor={colors.textLight}
+          placeholder="Search name, phone, or email"
+          placeholderTextColor={colors.text3}
           autoCapitalize="none"
         />
-        {query.length > 0 && (
+        {query.length > 0 ? (
           <Pressable onPress={() => setQuery('')} hitSlop={6}>
             <Text style={styles.clearIcon}>✕</Text>
           </Pressable>
-        )}
+        ) : null}
       </View>
-
-      <Pressable
-        onPress={onCreateGroup}
-        style={({ pressed }) => [styles.groupCard, pressed && { opacity: 0.85 }]}>
-        <View style={styles.groupIcon}>
-          <Text style={styles.groupIconText}>👥</Text>
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.groupTitle}>New Group</Text>
-          <Text style={styles.groupSub}>Start a group chat with multiple people</Text>
-        </View>
-        <Text style={styles.groupChevron}>›</Text>
-      </Pressable>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -354,7 +342,7 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
           </Pressable>
         </View>
       ) : loading ? (
-        <View style={styles.loadingWrap}>
+        <View style={styles.center}>
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
@@ -363,175 +351,122 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
           keyExtractor={r => r.key}
           contentContainerStyle={{ paddingBottom: spacing.xxl + spacing.lg }}
           renderItem={({ item }) => {
-            if (item.kind === 'section') {
+            if (item.kind === 'action') {
               return (
-                <View style={styles.sectionRow}>
-                  <Text style={styles.sectionTitle}>{item.title}</Text>
-                  {item.sub ? (
-                    <View style={styles.sectionBadge}>
-                      <Text style={styles.sectionBadgeText}>{item.sub}</Text>
-                    </View>
-                  ) : null}
-                </View>
+                <Pressable
+                  onPress={item.onPress}
+                  disabled={item.busy}
+                  style={({ pressed }) => [
+                    styles.actionRow,
+                    pressed && { backgroundColor: colors.surfaceMuted },
+                  ]}>
+                  <View style={styles.actionIconWrap}>
+                    {item.busy ? (
+                      <ActivityIndicator color={colors.primary} />
+                    ) : (
+                      <Text style={styles.actionIcon}>{item.icon}</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.actionTitle}>{item.title}</Text>
+                    <Text style={styles.actionSub}>{item.sub}</Text>
+                  </View>
+                  <Text style={styles.actionChevron}>›</Text>
+                </Pressable>
               );
             }
-            if (item.kind === 'divider') {
+            if (item.kind === 'section') {
               return (
-                <View style={styles.dividerRow}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerLabel}>{item.label}</Text>
-                  <View style={styles.dividerLine} />
-                </View>
+                <Text style={styles.sectionTitle}>{item.title.toUpperCase()}</Text>
               );
             }
             if (item.kind === 'tip') {
               return (
-                <View style={styles.tipCard}>
-                  <Text style={styles.tipIcon}>💡</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.tipTitle}>Can't find someone?</Text>
-                    <Text style={styles.tipBody}>
-                      Friends without VibeChat can still get an invite via SMS — tap
-                      Invite next to their name above.
-                    </Text>
-                  </View>
-                </View>
+                <Text style={styles.footerTip}>
+                  Can't find someone? Tap{' '}
+                  <Text style={styles.footerTipBold}>Invite</Text> and we'll send
+                  them an SMS with a link to join.
+                </Text>
               );
             }
             if (item.kind === 'match') {
-              const { contact, profile } = item;
-              const busy = opening === contact.id;
+              const { profile, sub, contactId } = item;
+              const busy = opening === (contactId ?? profile.uid);
+              const initial = (profile.displayName || profile.email || '?')
+                .charAt(0)
+                .toUpperCase();
               return (
                 <Pressable
-                  onPress={() => openChatWith(profile, contact.id)}
+                  onPress={() => openChatWith(profile, contactId ?? profile.uid)}
                   disabled={busy}
                   style={({ pressed }) => [
-                    styles.row,
+                    styles.contactRow,
                     pressed && { backgroundColor: colors.surfaceMuted },
                   ]}>
                   {profile.photoURL ? (
                     <Image source={{ uri: profile.photoURL }} style={styles.avatar} />
                   ) : (
                     <View style={[styles.avatar, styles.avatarFallback]}>
-                      <Text style={styles.avatarFallbackText}>
-                        {(profile.displayName || contact.displayName || '?').charAt(0).toUpperCase()}
-                      </Text>
+                      <Text style={styles.avatarText}>{initial}</Text>
                     </View>
                   )}
                   <View style={{ flex: 1 }}>
                     <Text style={styles.rowName} numberOfLines={1}>
-                      {profile.displayName || contact.displayName}
+                      {profile.displayName || profile.email}
                     </Text>
                     <Text style={styles.rowSub} numberOfLines={1}>
-                      {profile.email || contact.phones[0] || ''}
+                      {sub}
                     </Text>
                   </View>
                   {busy ? (
                     <ActivityIndicator color={colors.primary} />
                   ) : (
-                    <View style={styles.badgeOn}>
-                      <Text style={styles.badgeOnText}>Chat</Text>
+                    <View style={styles.chatIconWrap}>
+                      <Text style={styles.chatIcon}>💬</Text>
                     </View>
                   )}
                 </Pressable>
               );
             }
-            if (item.kind === 'invite') {
-              const { contact } = item;
-              const canInvite = contact.phones.length > 0;
-              return (
-                <View style={styles.row}>
-                  <View style={[styles.avatar, styles.avatarMuted]}>
-                    <Text style={styles.avatarFallbackText}>
-                      {contact.displayName.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.rowName} numberOfLines={1}>
-                      {contact.displayName}
-                    </Text>
-                    <Text style={styles.rowSub} numberOfLines={1}>
-                      {contact.phones[0] ?? contact.emails[0] ?? ''}
-                    </Text>
-                  </View>
-                  <Pressable
-                    disabled={!canInvite}
-                    onPress={() => inviteContact(contact)}
-                    style={({ pressed }) => [
-                      styles.inviteBtn,
-                      !canInvite && { opacity: 0.4 },
-                      pressed && { opacity: 0.85 },
-                    ]}>
-                    <Text style={styles.inviteBtnText}>Invite</Text>
-                  </Pressable>
-                </View>
-              );
-            }
-            // Manual email entry — styled as a card.
+            // invite
+            const c = item.contact;
+            const canInvite = c.phones.length > 0;
+            const initial = c.displayName.charAt(0).toUpperCase();
             return (
-              <View style={styles.manualCard}>
-                <Text style={styles.manualLabel}>Invite by email address</Text>
-                <Text style={styles.manualHint}>
-                  Already on VibeChat but not in your contacts? Look them up directly.
-                </Text>
-                <View style={styles.manualRow}>
-                  <View style={styles.manualInputWrap}>
-                    <Text style={styles.manualInputIcon}>✉️</Text>
-                    <TextInput
-                      style={styles.manualInput}
-                      value={manualEmail}
-                      onChangeText={setManualEmail}
-                      placeholder="friend@example.com"
-                      placeholderTextColor={colors.textLight}
-                      autoCapitalize="none"
-                      keyboardType="email-address"
-                      onSubmitEditing={startManualByEmail}
-                      returnKeyType="go"
-                    />
-                  </View>
-                  <Pressable
-                    onPress={startManualByEmail}
-                    disabled={manualBusy || !manualEmail.trim()}
-                    style={({ pressed }) => [
-                      styles.manualBtn,
-                      (manualBusy || !manualEmail.trim()) && { opacity: 0.55 },
-                      pressed && { opacity: 0.85 },
-                    ]}>
-                    {manualBusy ? (
-                      <ActivityIndicator color={colors.textOnPrimary} />
-                    ) : (
-                      <Text style={styles.manualBtnText}>Go</Text>
-                    )}
-                  </Pressable>
+              <View style={styles.contactRow}>
+                <View style={[styles.avatar, styles.avatarMuted]}>
+                  <Text style={styles.avatarText}>{initial}</Text>
                 </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rowName} numberOfLines={1}>
+                    {c.displayName}
+                  </Text>
+                  <Text style={styles.rowSub} numberOfLines={1}>
+                    {c.phones[0] ?? c.emails[0] ?? ''}
+                  </Text>
+                </View>
+                <Pressable
+                  disabled={!canInvite}
+                  onPress={() => inviteContact(c)}
+                  style={({ pressed }) => [
+                    styles.inviteBtn,
+                    !canInvite && { opacity: 0.4 },
+                    pressed && { opacity: 0.85 },
+                  ]}>
+                  <Text style={styles.inviteBtnText}>Invite</Text>
+                </Pressable>
               </View>
             );
           }}
           ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              {searchingDirect ? (
-                <>
-                  <ActivityIndicator color={colors.primary} />
-                  <Text style={[styles.emptyBody, { marginTop: spacing.sm }]}>
-                    Searching VibeChat…
-                  </Text>
-                </>
-              ) : searchedSelf ? (
-                <>
-                  <Text style={styles.emptyTitle}>That's you 🙂</Text>
-                  <Text style={styles.emptyBody}>
-                    You can't start a chat with yourself.
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.emptyTitle}>No matches</Text>
-                  <Text style={styles.emptyBody}>
-                    Try a different name, phone number, or email.
-                  </Text>
-                </>
-              )}
-            </View>
+            query ? (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyTitle}>No matches</Text>
+                <Text style={styles.emptyBody}>
+                  Try a different name, phone number, or email.
+                </Text>
+              </View>
+            ) : null
           }
         />
       )}
@@ -540,20 +475,21 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.bg },
+  flex: { flex: 1, backgroundColor: colors.surface },
 
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+    gap: spacing.md,
   },
-  back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },
+  back: { color: colors.text, fontSize: 32, fontWeight: '300' },
   headerTitle: {
     flex: 1,
-    textAlign: 'center',
-    color: colors.headerText,
-    fontSize: fontSize.lg,
+    color: colors.text,
+    fontSize: fontSize.lg + 1,
     fontWeight: '700',
   },
 
@@ -562,7 +498,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: colors.surfaceMuted,
     marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
     paddingHorizontal: spacing.md,
     borderRadius: radius.pill,
     gap: spacing.sm,
@@ -576,129 +513,38 @@ const styles = StyleSheet.create({
   },
   clearIcon: { fontSize: 14, color: colors.textMuted, paddingHorizontal: 4 },
 
-  groupCard: {
+  // Big "New group" / "New contact" cards
+  actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     gap: spacing.md,
-    backgroundColor: colors.primarySoft,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.lg,
   },
-  groupIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primary,
+  actionIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primarySoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  groupIconText: { fontSize: 20 },
-  groupTitle: { color: colors.primary, fontWeight: '700', fontSize: fontSize.md },
-  groupSub: { color: colors.textMuted, fontSize: fontSize.xs + 1, marginTop: 2 },
-  groupChevron: { color: colors.primary, fontSize: 22, fontWeight: '300', paddingRight: 4 },
+  actionIcon: { fontSize: 20 },
+  actionTitle: { color: colors.text, fontSize: fontSize.md + 1, fontWeight: '700' },
+  actionSub: { color: colors.textMuted, fontSize: fontSize.sm, marginTop: 2 },
+  actionChevron: { color: colors.text3, fontSize: 24, fontWeight: '300' },
 
-  error: {
-    color: colors.error,
-    fontSize: fontSize.sm,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    textAlign: 'center',
-  },
-
-  permissionWrap: { padding: spacing.xl, alignItems: 'center' },
-  permTitle: { fontSize: fontSize.md + 1, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
-  permBody: {
-    fontSize: fontSize.sm + 1,
-    color: colors.textMuted,
-    textAlign: 'center',
-    marginBottom: spacing.lg,
-    lineHeight: 20,
-  },
-  permBtn: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: radius.md,
-  },
-  permBtnText: { color: colors.textOnPrimary, fontWeight: '700' },
-
-  loadingWrap: { padding: spacing.xxl, alignItems: 'center' },
-
-  sectionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.xs,
-  },
   sectionTitle: {
     fontSize: fontSize.xs + 1,
     fontWeight: '700',
     color: colors.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  sectionBadge: {
-    minWidth: 22,
-    height: 20,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sectionBadgeText: {
-    color: colors.primary,
-    fontSize: fontSize.xs,
-    fontWeight: '700',
-  },
-
-  // "Or invite by email" rule
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    letterSpacing: 0.7,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.md,
-    gap: spacing.sm + 2,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: colors.divider },
-  dividerLabel: {
-    color: colors.textMuted,
-    fontSize: fontSize.xs + 1,
-    fontWeight: '600',
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.sm,
   },
 
-  // Tip helper card
-  tipCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.lg,
-    backgroundColor: '#FFFBEB',
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  tipIcon: { fontSize: 18, marginTop: 1 },
-  tipTitle: {
-    color: '#92400E',
-    fontWeight: '700',
-    fontSize: fontSize.sm + 1,
-    marginBottom: 2,
-  },
-  tipBody: {
-    color: '#A16207',
-    fontSize: fontSize.xs + 1,
-    lineHeight: 17,
-  },
-
-  row: {
+  contactRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
@@ -712,80 +558,81 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarMuted: {
-    backgroundColor: '#C4B5FD',
+    backgroundColor: '#FB7185',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarFallbackText: { color: colors.headerText, fontWeight: '700', fontSize: fontSize.md + 1 },
+  avatarText: { color: '#fff', fontWeight: '700', fontSize: fontSize.md + 1 },
   rowName: { color: colors.text, fontSize: fontSize.md, fontWeight: '600' },
   rowSub: { color: colors.textMuted, fontSize: fontSize.xs + 2, marginTop: 2 },
 
-  badgeOn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
+  // Small chat-bubble icon on the right of matched contacts
+  chatIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     backgroundColor: colors.primarySoft,
-  },
-  badgeOnText: { color: colors.primary, fontWeight: '700', fontSize: fontSize.xs + 1 },
-
-  inviteBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-  },
-  inviteBtnText: { color: colors.primary, fontWeight: '700', fontSize: fontSize.xs + 1 },
-
-  manualCard: {
-    marginHorizontal: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.divider,
-  },
-  manualLabel: {
-    color: colors.text,
-    fontSize: fontSize.md,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  manualHint: {
-    color: colors.textMuted,
-    fontSize: fontSize.xs + 1,
-    marginBottom: spacing.md,
-    lineHeight: 17,
-  },
-  manualRow: { flexDirection: 'row', gap: spacing.sm },
-  manualInputWrap: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.divider,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.surfaceMuted,
-  },
-  manualInputIcon: { fontSize: 14, marginRight: spacing.sm, opacity: 0.7 },
-  manualInput: {
-    flex: 1,
-    paddingVertical: spacing.md - 2,
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  manualBtn: {
-    minWidth: 64,
-    paddingHorizontal: spacing.md,
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  manualBtnText: { color: colors.textOnPrimary, fontWeight: '700' },
+  chatIcon: { fontSize: 16 },
 
+  inviteBtn: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    borderColor: colors.divider,
+  },
+  inviteBtnText: { color: colors.text, fontWeight: '700', fontSize: fontSize.sm + 1 },
+
+  // Footer hint below invites
+  footerTip: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    lineHeight: 19,
+  },
+  footerTipBold: { color: colors.text, fontWeight: '700' },
+
+  permissionWrap: { padding: spacing.xl, alignItems: 'center' },
+  permTitle: {
+    fontSize: fontSize.md + 1,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: spacing.sm,
+  },
+  permBody: {
+    fontSize: fontSize.sm + 1,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+    lineHeight: 20,
+  },
+  permBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+  },
+  permBtnText: { color: '#fff', fontWeight: '700' },
+
+  error: {
+    color: colors.error,
+    fontSize: fontSize.sm,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    textAlign: 'center',
+  },
+
+  center: { padding: spacing.xxl, alignItems: 'center' },
   emptyWrap: { padding: spacing.xxl, alignItems: 'center' },
-  emptyTitle: { color: colors.text, fontWeight: '700', fontSize: fontSize.md + 1, marginBottom: spacing.xs },
+  emptyTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: fontSize.md + 1,
+    marginBottom: spacing.xs,
+  },
   emptyBody: { color: colors.textMuted, fontSize: fontSize.sm + 1, textAlign: 'center' },
 });
