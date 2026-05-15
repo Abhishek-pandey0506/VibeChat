@@ -16,6 +16,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { GradientHeader } from '../components/GradientHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   blockUser,
@@ -126,13 +127,13 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
 
   return (
     <View style={styles.flex}>
-      <View style={styles.header}>
+      <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Profile</Text>
         <View style={{ width: 28 }} />
-      </View>
+      </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body}>
         <View style={styles.heroBg} />
@@ -237,7 +238,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    backgroundColor: colors.headerDark,
     zIndex: 2,
   },
   back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },

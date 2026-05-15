@@ -1,45 +1,50 @@
+/**
+ * Login screen — dark violet hero with a chat-bubble showcase at the top,
+ * the brand mark + value prop, and a single white "Continue with Google"
+ * pill button. Terms + Privacy in the footer.
+ */
+
 import { useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
 import { signInWithGoogle } from '../services/authService';
 import { colors, fontSize, radius, spacing } from '../theme';
 
-const LOGO = require('../assets/Logo.png');
 const GOOGLE_ICON = require('../assets/google-g.png');
-
-interface Feature {
-  icon: string;
-  label: string;
-  sub: string;
-}
-
-const FEATURES: Feature[] = [
-  { icon: '🔒', label: 'End-to-end', sub: 'Secure by default' },
-  { icon: '⚡', label: 'Realtime', sub: 'Messages in ms' },
-  { icon: '🎬', label: 'Rich media', sub: 'Photos & videos' },
-];
+const LOGO = require('../assets/Logo.png');
 
 interface Props {
   onOpenTerms: () => void;
   onOpenPrivacy: () => void;
 }
 
+interface DemoBubble {
+  side: 'left' | 'right';
+  text: string;
+}
+
+const DEMO_BUBBLES: DemoBubble[] = [
+  { side: 'left', text: 'Heyy 👋' },
+  { side: 'right', text: 'Just landed!' },
+  { side: 'left', text: 'Welcome home 🌟' },
+  { side: 'right', text: 'See you soon ❤️' },
+];
+
 export function LoginScreen({ onOpenTerms, onOpenPrivacy }: Props) {
-  const [googleLoading, setGoogleLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   async function handleGoogle() {
     setError('');
-    setGoogleLoading(true);
+    setLoading(true);
     try {
       await signInWithGoogle();
     } catch (e: any) {
@@ -47,77 +52,101 @@ export function LoginScreen({ onOpenTerms, onOpenPrivacy }: Props) {
         setError(e?.message ?? 'Google sign-in failed.');
       }
     } finally {
-      setGoogleLoading(false);
+      setLoading(false);
     }
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      {/* Decorative background blobs — softly tinted to add depth without distracting. */}
-      <View pointerEvents="none" style={[styles.blob, styles.blobTL]} />
-      <View pointerEvents="none" style={[styles.blob, styles.blobBR]} />
-      <View pointerEvents="none" style={[styles.dot, styles.dotA]} />
-      <View pointerEvents="none" style={[styles.dot, styles.dotB]} />
-      <View pointerEvents="none" style={[styles.dot, styles.dotC]} />
+    <LinearGradient
+      // Slightly darker magenta at the bottom (#831843) keeps the white
+      // subhead readable while still pulling the brand's pink accent in.
+      colors={[colors.brandFrom, colors.brandMid, '#9D174D']}
+      start={{ x: 0.1, y: 0 }}
+      end={{ x: 0.9, y: 1 }}
+      style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.brandFrom} translucent />
 
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}>
-        <View style={styles.brandRow}>
-          <Image source={LOGO} style={styles.brandImage} resizeMode="contain" />
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.welcome}>Welcome 👋</Text>
-          <Text style={styles.welcomeSub}>
-            Sign in with Google to start chatting with friends — no passwords to remember.
-          </Text>
-
-          <View style={styles.features}>
-            {FEATURES.map(f => (
-              <View key={f.label} style={styles.feature}>
-                <View style={styles.featureIconWrap}>
-                  <Text style={styles.featureIcon}>{f.icon}</Text>
-                </View>
-                <Text style={styles.featureLabel}>{f.label}</Text>
-                <Text style={styles.featureSub}>{f.sub}</Text>
-              </View>
-            ))}
-          </View>
-
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.googleButton,
-              pressed && styles.googleButtonPressed,
-              googleLoading && { opacity: 0.7 },
+      {/* Decorative dotted backdrop, very subtle */}
+      <View style={styles.dotsLayer} pointerEvents="none">
+        {Array.from({ length: 40 }).map((_, i) => (
+          <View
+            key={i}
+            style={[
+              styles.bgDot,
+              {
+                top: (i * 51) % 700 + 60,
+                left: ((i * 97) % 360) + 8,
+              },
             ]}
-            onPress={handleGoogle}
-            disabled={googleLoading}>
-            {googleLoading ? (
-              <ActivityIndicator color={colors.text} />
-            ) : (
-              <>
-                <Image source={GOOGLE_ICON} style={styles.googleIcon} resizeMode="contain" />
-                <Text style={styles.googleText}>Continue with Google</Text>
-              </>
-            )}
-          </Pressable>
+          />
+        ))}
+      </View>
 
-          <View style={styles.trustRow}>
-            <View style={styles.trustDot} />
-            <Text style={styles.trustText}>Powered by Firebase Authentication</Text>
+      <View style={styles.bubbles}>
+        {DEMO_BUBBLES.map((b, i) => (
+          <View
+            key={i}
+            style={[
+              styles.bubbleRow,
+              b.side === 'right' ? { justifyContent: 'flex-end' } : null,
+            ]}>
+            <View
+              style={[
+                styles.bubble,
+                b.side === 'right' ? styles.bubbleMine : styles.bubbleTheirs,
+              ]}>
+              <Text
+                style={[
+                  styles.bubbleText,
+                  b.side === 'right' ? styles.bubbleTextMine : styles.bubbleTextTheirs,
+                ]}>
+                {b.text}
+              </Text>
+            </View>
           </View>
+        ))}
+      </View>
+
+      <View style={styles.brandBlock}>
+        <View style={styles.brandRow}>
+          <Image source={LOGO} style={styles.icon} resizeMode="contain" />
+          <Text style={styles.brand}>
+            Vibe<Text style={{ color: '#F9A8D4' }}>Chat</Text>
+          </Text>
         </View>
+
+        <Text style={styles.headline}>
+          Chat that{'\n'}
+          <Text style={styles.headlineAccent}>feels right.</Text>
+        </Text>
+        <Text style={styles.subhead}>
+          End-to-end encrypted messaging with the people who matter. No ads. No noise.
+        </Text>
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <Pressable
+          onPress={handleGoogle}
+          disabled={loading}
+          style={({ pressed }) => [
+            styles.googleBtn,
+            pressed && { opacity: 0.92, transform: [{ scale: 0.99 }] },
+            loading && { opacity: 0.7 },
+          ]}>
+          {loading ? (
+            <ActivityIndicator color={colors.text} />
+          ) : (
+            <>
+              <Image source={GOOGLE_ICON} style={styles.googleIcon} resizeMode="contain" />
+              <Text style={styles.googleText}>Continue with Google</Text>
+            </>
+          )}
+        </Pressable>
 
         <Text style={styles.fineprint}>
-          By continuing you agree to the{' '}
+          By continuing you agree to our{' '}
           <Text style={styles.fineprintLink} onPress={onOpenTerms}>
-            Terms of Service
+            Terms
           </Text>{' '}
           and{' '}
           <Text style={styles.fineprintLink} onPress={onOpenPrivacy}>
@@ -125,175 +154,120 @@ export function LoginScreen({ onOpenTerms, onOpenPrivacy }: Props) {
           </Text>
           .
         </Text>
-      </ScrollView>
-    </KeyboardAvoidingView>
+      </View>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.bgSoft },
+  container: { flex: 1 },
 
-  // Background atmosphere
-  blob: {
+  dotsLayer: { ...StyleSheet.absoluteFillObject },
+  bgDot: {
     position: 'absolute',
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    opacity: 0.35,
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
-  blobTL: { top: -80, left: -80, backgroundColor: '#E9D5FF' /* light violet */ },
-  blobBR: { bottom: -100, right: -90, backgroundColor: '#FBCFE8' /* light pink */ },
-  dot: {
-    position: 'absolute',
-    borderRadius: 999,
-    backgroundColor: colors.primary,
-    opacity: 0.15,
-  },
-  dotA: { width: 10, height: 10, top: '14%', left: '12%' },
-  dotB: { width: 8, height: 8, top: '22%', right: '14%' },
-  dotC: { width: 6, height: 6, bottom: '22%', left: '18%' },
 
-  container: {
-    flexGrow: 1,
-    justifyContent: 'center',
+  bubbles: {
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xxl,
+    paddingTop: 100,
+    gap: spacing.md,
+  },
+  bubbleRow: { flexDirection: 'row' },
+  bubble: {
+    maxWidth: '72%',
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: radius.xl,
+  },
+  bubbleMine: {
+    backgroundColor: colors.primary500,
+    borderBottomRightRadius: 6,
+  },
+  bubbleTheirs: {
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderBottomLeftRadius: 6,
+  },
+  bubbleText: { fontSize: fontSize.md + 1, fontWeight: '600' },
+  bubbleTextMine: { color: '#FFFFFF' },
+  bubbleTextTheirs: { color: colors.text },
+
+  brandBlock: {
+    marginTop: 'auto',
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
   },
 
   brandRow: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  brandImage: { width: 220, height: 160 },
-
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl + 4,
-    padding: spacing.xl,
-    shadowColor: colors.shadow,
-    shadowOpacity: 1,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 6,
-  },
-  welcome: {
-    fontSize: fontSize.xxl,
-    fontWeight: '800',
-    color: colors.text,
-    textAlign: 'center',
-    marginBottom: spacing.xs,
-  },
-  welcomeSub: {
-    fontSize: fontSize.sm + 1,
-    color: colors.textMuted,
-    textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: spacing.lg,
-  },
-
-  features: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
     marginBottom: spacing.lg,
-    gap: spacing.sm,
   },
-  feature: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.xs,
-    borderRadius: radius.md,
-    backgroundColor: colors.primarySoft,
+  icon: {
+    width: 44,
+    height: 44,
   },
-  featureIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
+  brand: {
+    color: '#fff',
+    fontSize: fontSize.xl,
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
-  featureIcon: { fontSize: 18 },
-  featureLabel: {
-    fontSize: fontSize.xs + 1,
-    fontWeight: '700',
-    color: colors.primary,
-    letterSpacing: 0.2,
+
+  headline: {
+    color: '#FFFFFF',
+    fontSize: fontSize.hero,
+    fontWeight: '800',
+    lineHeight: 50,
+    letterSpacing: -1.2,
+    marginBottom: spacing.md,
   },
-  featureSub: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 2,
-    textAlign: 'center',
+  headlineAccent: { color: '#F9A8D4' /* bright pink — reads against magenta */ },
+  subhead: {
+    color: 'rgba(255,255,255,0.92)',
+    fontSize: fontSize.md + 1,
+    lineHeight: 22,
+    marginBottom: spacing.xl,
   },
 
   error: {
-    color: colors.error,
+    color: '#FCA5A5',
     fontSize: fontSize.sm,
-    textAlign: 'center',
     marginBottom: spacing.sm,
+    textAlign: 'center',
   },
 
-  googleButton: {
+  googleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm + 2,
-    alignSelf: 'stretch',
-    borderWidth: 1.5,
-    borderColor: colors.divider,
+    backgroundColor: '#FFFFFF',
     borderRadius: radius.lg,
     paddingVertical: spacing.md + 4,
-    backgroundColor: colors.surface,
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  googleButtonPressed: {
-    opacity: 0.92,
-    transform: [{ scale: 0.99 }],
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
   googleIcon: { width: 22, height: 22 },
   googleText: {
     color: colors.text,
+    fontSize: fontSize.lg - 1,
     fontWeight: '700',
-    fontSize: fontSize.md + 1,
     letterSpacing: 0.2,
   },
 
-  trustRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: spacing.md,
-  },
-  trustDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.success,
-  },
-  trustText: {
-    color: colors.textMuted,
-    fontSize: fontSize.xs + 1,
-    fontWeight: '500',
-  },
-
   fineprint: {
-    color: colors.textLight,
+    color: 'rgba(255,255,255,0.75)',
     fontSize: fontSize.xs + 1,
     textAlign: 'center',
-    marginTop: spacing.xl,
-    lineHeight: 16,
-    paddingHorizontal: spacing.lg,
+    marginTop: spacing.lg,
   },
-  fineprintLink: {
-    color: colors.primary,
-    fontWeight: '600',
-  },
+  fineprintLink: { color: '#FFFFFF', fontWeight: '700', textDecorationLine: 'underline' },
 });

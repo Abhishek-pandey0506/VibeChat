@@ -28,6 +28,7 @@ import {
   View,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
+import { GradientHeader } from '../components/GradientHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   addGroupMembers,
@@ -277,13 +278,13 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.header}>
+      <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Group info</Text>
         <View style={{ width: 28 }} />
-      </View>
+      </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body}>
         <View style={styles.heroBg} />
@@ -602,7 +603,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    backgroundColor: colors.headerDark,
   },
   back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },
   headerTitle: {

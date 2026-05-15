@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
+import LinearGradient from 'react-native-linear-gradient';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import Video from 'react-native-video';
 import { createThumbnail } from 'react-native-create-thumbnail';
@@ -49,6 +50,8 @@ interface Props {
   onOpenPeerProfile?: (otherUid: string) => void;
   /** Tapping the header on a group chat opens the GroupProfileScreen. */
   onOpenGroupProfile?: () => void;
+  /** Start a voice or video call with the other party. 1:1 only. */
+  onStartCall?: (otherUid: string, type: 'voice' | 'video') => void;
 }
 
 type Row =
@@ -62,6 +65,7 @@ export function ChatScreen({
   onBack,
   onOpenPeerProfile,
   onOpenGroupProfile,
+  onStartCall,
 }: Props) {
   const { user } = useAuthContext();
   const currentUser = user!;
@@ -405,13 +409,17 @@ export function ChatScreen({
       // disappears under the keyboard).
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+      <LinearGradient
+        colors={[colors.brandFrom, colors.brandMid, colors.brandTo]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}>
       <Pressable
         onPress={() => {
           if (otherUid && onOpenPeerProfile) onOpenPeerProfile(otherUid);
           else if (!otherUid && onOpenGroupProfile) onOpenGroupProfile();
         }}
         disabled={otherUid ? !onOpenPeerProfile : !onOpenGroupProfile}
-        style={({ pressed }) => [styles.header, pressed && { opacity: 0.85 }]}>
+        style={({ pressed }) => [styles.header, pressed && { opacity: 0.92 }]}>
         <Pressable onPress={onBack} hitSlop={10} style={({ pressed }) => pressed && { opacity: 0.6 }}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
@@ -432,10 +440,32 @@ export function ChatScreen({
             </Text>
           ) : null}
         </View>
-        {(otherUid && onOpenPeerProfile) || (!otherUid && onOpenGroupProfile) ? (
+        {otherUid && onStartCall ? (
+          <View style={styles.headerActions}>
+            <Pressable
+              onPress={e => {
+                e.stopPropagation();
+                onStartCall(otherUid, 'voice');
+              }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.callBtn, pressed && { opacity: 0.6 }]}>
+              <Text style={styles.callIcon}>📞</Text>
+            </Pressable>
+            <Pressable
+              onPress={e => {
+                e.stopPropagation();
+                onStartCall(otherUid, 'video');
+              }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.callBtn, pressed && { opacity: 0.6 }]}>
+              <Text style={styles.callIcon}>📹</Text>
+            </Pressable>
+          </View>
+        ) : (otherUid && onOpenPeerProfile) || (!otherUid && onOpenGroupProfile) ? (
           <Text style={styles.headerChevron}>›</Text>
         ) : null}
       </Pressable>
+      </LinearGradient>
 
       <View style={styles.chatBg}>
         {loading ? (
@@ -690,8 +720,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    backgroundColor: colors.headerDark,
     gap: spacing.sm,
+    // backgroundColor handled by the wrapping <LinearGradient>.
   },
   back: { color: colors.headerText, fontSize: 28, fontWeight: '400', width: 28, textAlign: 'center' },
   avatarSm: {
@@ -713,6 +743,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     fontWeight: '300',
   },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  callBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+  callIcon: { fontSize: 19 },
 
   chatBg: { flex: 1, backgroundColor: colors.chatBg },
 

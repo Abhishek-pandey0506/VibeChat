@@ -3,6 +3,7 @@ import { StatusBar, StyleSheet, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider, useAuthContext } from './src/contexts/AuthContext';
 import { configureGoogleSignIn, logout } from './src/services/authService';
+import { requestNotificationPermission } from './src/services/messagingService';
 import { subscribeUserProfile } from './src/services/firestoreService';
 import {
   startPresenceTracking,
@@ -16,8 +17,14 @@ import { CreateGroupScreen } from './src/screens/CreateGroupScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { UserProfileViewScreen } from './src/screens/UserProfileViewScreen';
 import { GroupProfileScreen } from './src/screens/GroupProfileScreen';
+import { IncomingCallScreen } from './src/screens/IncomingCallScreen';
+import { InCallScreen } from './src/screens/InCallScreen';
+import { startCall, subscribeIncomingCalls, subscribeCall } from './src/services/callService';
+import type { CallDoc, CallType } from './src/types/models';
 import { SplashScreen } from './src/screens/SplashScreen';
 import { CompleteProfileScreen } from './src/screens/CompleteProfileScreen';
+import { AllSetScreen } from './src/screens/AllSetScreen';
+import { SigningInScreen } from './src/screens/SigningInScreen';
 import { TermsScreen } from './src/screens/TermsScreen';
 import { PrivacyScreen } from './src/screens/PrivacyScreen';
 import { colors } from './src/theme';
@@ -31,7 +38,8 @@ function App() {
   const _ = useColorScheme();
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+      {/* Screens override this StatusBar; this is just the default. */}
+      <StatusBar barStyle="light-content" backgroundColor={colors.brandFrom} />
       <AuthProvider>
         <AppContent />
       </AuthProvider>
@@ -57,6 +65,13 @@ type AppRoute =
 
 const SPLASH_MIN_MS = 3000;
 
+interface ActiveCall {
+  callId: string;
+  side: 'caller' | 'callee';
+  type: CallType;
+  peerUid: string;
+}
+
 function AppContent() {
   const insets = useSafeAreaInsets();
   const { user, initializing } = useAuthContext();
@@ -65,12 +80,30 @@ function AppContent() {
   const [minSplashElapsed, setMinSplashElapsed] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [incomingCall, setIncomingCall] = useState<CallDoc | null>(null);
+  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
+  /** Set to true the moment we leave CompleteProfileScreen — used to show
+   *  AllSetScreen exactly once before the user hits the rooms list. */
+  const [showAllSet, setShowAllSet] = useState(false);
+  /** Tracks whether we've been on CompleteProfileScreen in this session so
+   *  AllSetScreen only fires after a fresh completion (not on every cold
+   *  start when the profile already has a phone). */
+  const sawIncompleteRef = useRef(false);
   const presenceRef = useRef<PresenceHandle | null>(null);
 
   // Hold the splash for at least SPLASH_MIN_MS.
   useEffect(() => {
     const t = setTimeout(() => setMinSplashElapsed(true), SPLASH_MIN_MS);
     return () => clearTimeout(t);
+  }, []);
+
+  // Ask for notification permission once on app launch. The OS gates the
+  // actual dialog so this is a no-op when the user has already decided
+  // (granted or denied previously).
+  useEffect(() => {
+    void requestNotificationPermission().catch(err =>
+      console.warn('[App] notification permission check failed', err),
+    );
   }, []);
 
   // Subscribe to the signed-in user's profile so we can detect when it
@@ -88,6 +121,55 @@ function AppContent() {
     });
     return unsub;
   }, [user]);
+
+  // Global incoming-call listener. Surfaces a full-screen ringing UI
+  // regardless of which route is on top.
+  useEffect(() => {
+    if (!user || !profile?.phoneNumber) {
+      setIncomingCall(null);
+      return;
+    }
+    const unsub = subscribeIncomingCalls(user.uid, call => {
+      // Ignore the call we initiated ourselves (some snapshot delay can
+      // bounce our own ringing doc back to us for a beat).
+      if (call && call.callerUid !== user.uid) setIncomingCall(call);
+      else setIncomingCall(null);
+    });
+    return unsub;
+  }, [user, profile?.phoneNumber]);
+
+  // When a call we're in moves to 'accepted' on the doc, the caller side
+  // transitions from outgoing-ringing → in-call. We watch the active call.
+  useEffect(() => {
+    if (!activeCall) return;
+    const unsub = subscribeCall(activeCall.callId, doc => {
+      if (!doc) {
+        setActiveCall(null);
+        return;
+      }
+      if (doc.status === 'declined' || doc.status === 'ended') {
+        setActiveCall(null);
+      }
+    });
+    return unsub;
+  }, [activeCall]);
+
+  function handleStartCall(otherUid: string, type: CallType) {
+    if (!user) return;
+    startCall(user.uid, otherUid, type)
+      .then(callId => {
+        setActiveCall({ callId, side: 'caller', type, peerUid: otherUid });
+      })
+      .catch(err => console.warn('[App] startCall failed', err));
+  }
+
+  // Flip showAllSet on once profile becomes complete after the user has
+  // been on CompleteProfileScreen this session.
+  useEffect(() => {
+    if (sawIncompleteRef.current && profile?.phoneNumber && !showAllSet) {
+      setShowAllSet(true);
+    }
+  }, [profile?.phoneNumber, showAllSet]);
 
   // Recovery: if the Firebase Auth user is still around but the profile
   // doc has been deleted (typically a half-completed deleteAccount from a
@@ -134,8 +216,10 @@ function AppContent() {
 
   // ─── Signed-out branch ──────────────────────────────────────────────
   if (!user) {
+    const authBg =
+      authRoute.name === 'login' ? colors.brandFrom : colors.bgSoft;
     return (
-      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.bgSoft }]}>
+      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: authBg }]}>
         {authRoute.name === 'login' && (
           <LoginScreen
             onOpenTerms={() => setAuthRoute({ name: 'terms' })}
@@ -153,9 +237,11 @@ function AppContent() {
   }
 
   // ─── Signed-in: gate behind profile completion ───────────────────────
-  // While we don't know yet, keep the splash on screen.
+  // While we don't know yet, show the "Signing you in" checklist instead
+  // of the cold splash — gives the user a sense of progression in the
+  // gap between Google auth and Firestore profile arrival.
   if (profileLoading && !profile) {
-    return <SplashScreen />;
+    return <SigningInScreen />;
   }
 
   // Profile doc doesn't exist at all. Two cases land here:
@@ -170,12 +256,26 @@ function AppContent() {
   }
 
   // Profile exists but the user hasn't filled in their phone number yet —
-  // brand-new Google sign-in. Parent bg is purple so the status-bar area
-  // matches the in-screen header.
+  // brand-new Google sign-in.
   if (!profile.phoneNumber) {
+    sawIncompleteRef.current = true;
     return (
-      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.headerDark }]}>
+      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
         <CompleteProfileScreen />
+      </View>
+    );
+  }
+
+  // First render after a fresh completion → AllSetScreen takeover.
+  if (showAllSet) {
+    return (
+      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.brandFrom }]}>
+        <AllSetScreen
+          onGoToChats={() => {
+            sawIncompleteRef.current = false;
+            setShowAllSet(false);
+          }}
+        />
       </View>
     );
   }
@@ -235,6 +335,7 @@ function AppContent() {
           onOpenGroupProfile={() =>
             setRoute({ name: 'groupProfile', roomId: route.roomId, prev: route })
           }
+          onStartCall={handleStartCall}
         />
       )}
       {route.name === 'userProfile' && (
@@ -249,6 +350,41 @@ function AppContent() {
           onBack={() => setRoute(route.prev)}
           onGroupGone={() => setRoute({ name: 'rooms' })}
         />
+      )}
+
+      {/* Active call surface sits on top of the route stack. It takes the
+          entire screen so the underlying route is hidden while a call is
+          in progress. */}
+      {activeCall && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <InCallScreen
+            callId={activeCall.callId}
+            side={activeCall.side}
+            type={activeCall.type}
+            peerUid={activeCall.peerUid}
+            onClosed={() => setActiveCall(null)}
+          />
+        </View>
+      )}
+
+      {/* Incoming-call ringer overlays everything, including an active call
+          (rare, but it'd mask a parallel ring). */}
+      {incomingCall && !activeCall && (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <IncomingCallScreen
+            call={incomingCall}
+            onAccepted={call => {
+              setIncomingCall(null);
+              setActiveCall({
+                callId: call.id,
+                side: 'callee',
+                type: call.type,
+                peerUid: call.callerUid,
+              });
+            }}
+            onDeclined={() => setIncomingCall(null)}
+          />
+        </View>
       )}
     </View>
   );

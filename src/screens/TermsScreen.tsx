@@ -1,102 +1,122 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { colors, fontSize, spacing } from '../theme';
+import { Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { GradientHeader } from '../components/GradientHeader';
+import { colors, fontSize, radius, spacing } from '../theme';
 
 interface Props {
   onBack: () => void;
 }
 
+const SECTIONS = [
+  {
+    n: '01',
+    title: 'Acceptance',
+    body:
+      "By creating an account or using VibeChat, you agree to these Terms. If you don't agree, please don't use the Service.",
+  },
+  {
+    n: '02',
+    title: 'Your account',
+    body:
+      'You sign in with Google and are responsible for keeping it secure. You must be at least 13 (16 in some regions).',
+  },
+  {
+    n: '03',
+    title: 'Acceptable use',
+    body:
+      "No unlawful, harassing, defamatory or infringing content. Don't try to access other accounts, interfere with the Service, or send bulk unsolicited messages.",
+  },
+  {
+    n: '04',
+    title: 'Your content',
+    body:
+      'You own your messages, photos and videos. By sending them you grant us a limited license to store and transmit them to the recipients you choose — solely to run the Service.',
+  },
+  {
+    n: '05',
+    title: 'Service availability',
+    body:
+      'We do our best to keep VibeChat running, but it\'s provided "as is." Features may be added, changed, or removed.',
+  },
+  {
+    n: '06',
+    title: 'Termination',
+    body:
+      'You can sign out anytime. We may suspend accounts that violate these Terms or applicable law.',
+  },
+];
+
 export function TermsScreen({ onBack }: Props) {
   return (
     <View style={styles.flex}>
-      <View style={styles.header}>
+      {/* Match the gradient's dark indigo start so the system status bar
+          blends seamlessly with the header instead of leaving a white strip
+          with hard-to-read icons (the time/battery were near-invisible
+          against the previous light background). */}
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={colors.brandFrom}
+        translucent={false}
+      />
+      <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Terms of Service</Text>
+        <Text style={styles.headerTitle}>Terms of service</Text>
         <View style={{ width: 28 }} />
-      </View>
+      </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body}>
-        <Text style={styles.updated}>Last updated: May 2026</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.metaLabel}>Last updated</Text>
+          <View style={styles.metaDot} />
+          <Text style={styles.metaValue}>May 2026</Text>
+        </View>
 
-        <Section title="1. Acceptance of Terms">
-          By creating an account or using VibeChat ("Service"), you agree to these
-          Terms of Service. If you don't agree, please don't use the Service.
-        </Section>
+        <Text style={styles.hero}>
+          The rules,{'\n'}
+          <Text style={styles.heroAccent}>simply.</Text>
+        </Text>
+        <Text style={styles.heroSub}>
+          Plain-language terms. No legalese theatre.
+        </Text>
 
-        <Section title="2. Your Account">
-          You sign in with a Google account. You're responsible for keeping that
-          Google account secure. You must be at least 13 years old (16 in some
-          jurisdictions) to use VibeChat.
-        </Section>
+        {SECTIONS.map(s => (
+          <View key={s.n} style={styles.section}>
+            <View style={styles.numChip}>
+              <Text style={styles.numChipText}>{s.n}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>{s.title}</Text>
+              <Text style={styles.sectionBody}>{s.body}</Text>
+            </View>
+          </View>
+        ))}
 
-        <Section title="3. Acceptable Use">
-          You agree not to use VibeChat to send unlawful, harmful, harassing,
-          defamatory, or infringing content. You won't attempt to access other
-          users' accounts, interfere with the Service, or use it to send bulk
-          unsolicited messages.
-        </Section>
-
-        <Section title="4. Your Content">
-          You retain ownership of the messages, photos, and videos you send. By
-          sending them you grant VibeChat a limited license to store and
-          transmit that content to the recipients you choose, solely to operate
-          the Service.
-        </Section>
-
-        <Section title="5. Privacy">
-          Our handling of your data is described in our Privacy Policy. Please
-          read it carefully before using the Service.
-        </Section>
-
-        <Section title="6. Service Availability">
-          We do our best to keep VibeChat running, but the Service is provided
-          "as is" without warranties. We may add, change, or remove features at
-          any time.
-        </Section>
-
-        <Section title="7. Termination">
-          You can sign out and stop using VibeChat at any time. We may suspend
-          or terminate accounts that violate these Terms or applicable law.
-        </Section>
-
-        <Section title="8. Limitation of Liability">
-          To the maximum extent permitted by law, VibeChat is not liable for
-          indirect, incidental, or consequential damages arising from your use
-          of the Service.
-        </Section>
-
-        <Section title="9. Changes to These Terms">
-          We may update these Terms. If the changes are material we'll let you
-          know inside the app. Continued use after the change means you accept
-          the updated Terms.
-        </Section>
-
-        <Section title="10. Contact">
-          Questions? Reach us at amalstack06@gmail.com.
-        </Section>
+        <View style={styles.contactCard}>
+          <Text style={styles.contactTitle}>Questions?</Text>
+          <Text style={styles.contactBody}>
+            Reach our team at{' '}
+            <Text
+              style={styles.contactLink}
+              onPress={() => Linking.openURL('mailto:amalstack06@gmail.com')}>
+              amalstack06@gmail.com
+            </Text>{' '}
+            — we usually reply within a day.
+          </Text>
+        </View>
       </ScrollView>
-    </View>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <Text style={styles.sectionBody}>{children}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    backgroundColor: colors.headerDark,
   },
   back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },
   headerTitle: {
@@ -106,23 +126,100 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     fontWeight: '700',
   },
-  body: { padding: spacing.xl, paddingBottom: spacing.xxl },
-  updated: {
-    color: colors.textLight,
-    fontSize: fontSize.sm,
-    marginBottom: spacing.lg,
-    fontStyle: 'italic',
+
+  body: {
+    padding: spacing.xl,
+    paddingBottom: spacing.xxl,
   },
-  section: { marginBottom: spacing.lg },
+
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  metaLabel: {
+    color: colors.text3,
+    fontSize: fontSize.xs + 1,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  metaDot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: colors.text3,
+  },
+  metaValue: { color: colors.text, fontSize: fontSize.sm + 1, fontWeight: '600' },
+
+  hero: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -1.2,
+    lineHeight: 44,
+    marginBottom: spacing.sm,
+  },
+  heroAccent: { color: colors.primary },
+  heroSub: {
+    color: colors.text2,
+    fontSize: fontSize.md + 1,
+    marginBottom: spacing.xl + 4,
+    lineHeight: 22,
+  },
+
+  section: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.xl,
+  },
+  numChip: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  numChipText: {
+    color: colors.primary,
+    fontWeight: '800',
+    fontSize: fontSize.md,
+    letterSpacing: 0.5,
+  },
   sectionTitle: {
     color: colors.text,
-    fontSize: fontSize.md + 1,
+    fontSize: fontSize.lg,
     fontWeight: '700',
-    marginBottom: spacing.xs,
+    marginBottom: 6,
   },
   sectionBody: {
-    color: colors.textMuted,
+    color: colors.text2,
     fontSize: fontSize.md - 1,
-    lineHeight: 22,
+    lineHeight: 21,
+  },
+
+  contactCard: {
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primarySoft,
+  },
+  contactTitle: {
+    fontSize: fontSize.lg,
+    fontWeight: '800',
+    color: colors.primary,
+    marginBottom: spacing.xs,
+  },
+  contactBody: {
+    color: colors.text2,
+    fontSize: fontSize.md - 1,
+    lineHeight: 21,
+  },
+  contactLink: {
+    color: colors.primary,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });

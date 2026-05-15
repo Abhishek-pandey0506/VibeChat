@@ -18,7 +18,49 @@ function timestampedName(ext: string): string {
 
 function guessExt(uri: string): string {
   const match = uri.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-  return match?.[1] ?? 'jpg';
+  return (match?.[1] ?? 'jpg').toLowerCase();
+}
+
+/**
+ * Map a file extension to a proper IANA MIME type. The Firebase Storage
+ * rules require `request.resource.contentType.matches('image/.*')`, so the
+ * MIME has to be valid — `image/jpg` (a common typo) is *not* in IANA and
+ * some backends reject it. Always use `image/jpeg` for .jpg/.jpeg.
+ */
+function mimeFor(ext: string): string {
+  const e = ext.toLowerCase();
+  if (e === 'jpg' || e === 'jpeg') return 'image/jpeg';
+  if (e === 'png') return 'image/png';
+  if (e === 'gif') return 'image/gif';
+  if (e === 'webp') return 'image/webp';
+  if (e === 'heic' || e === 'heif') return 'image/heic';
+  return `image/${e}`;
+}
+
+/**
+ * Turn the Firebase Storage SDK's slightly cryptic error codes into copy
+ * the user can actually act on. Most "object-not-found"-on-upload reports
+ * trace back to either Storage not being enabled in the console, or rules
+ * that haven't been deployed yet.
+ */
+export function describeStorageError(e: any): string {
+  const code = e?.code ?? '';
+  if (code === 'storage/unauthorized') {
+    return "You don't have permission to upload that. Try signing out and back in.";
+  }
+  if (code === 'storage/object-not-found') {
+    return 'Storage is not reachable. Make sure Firebase Storage is enabled and the security rules are deployed.';
+  }
+  if (code === 'storage/quota-exceeded') {
+    return 'Your storage quota is full. Free some space and try again.';
+  }
+  if (code === 'storage/canceled') {
+    return 'Upload cancelled.';
+  }
+  if (code === 'storage/retry-limit-exceeded') {
+    return 'Network was unstable. Please try again on a stronger connection.';
+  }
+  return e?.message ?? 'Upload failed. Please try again.';
 }
 
 export interface UploadProgress {
@@ -36,9 +78,13 @@ async function uploadAndGetUrl(
   fileUri: string,
   options: UploadOptions,
 ): Promise<string> {
+  if (!fileUri) {
+    throw new Error('No file selected.');
+  }
   const ref = firebaseStorage().ref(storagePath);
+  const ext = guessExt(fileUri);
   const task = ref.putFile(fileUri, {
-    contentType: options.contentType ?? `image/${guessExt(fileUri)}`,
+    contentType: options.contentType ?? mimeFor(ext),
   });
 
   if (options.onProgress) {
@@ -66,6 +112,40 @@ export async function uploadGroupImage(
 ): Promise<string> {
   const path = `groupImages/${roomId}/${timestampedName(guessExt(fileUri))}`;
   return uploadAndGetUrl(path, fileUri, options);
+}
+
+/**
+ * Encode a profile photo as a base64 data URL and write it directly to
+ * `users/{uid}.photoURL`. NO Firebase Storage involved — works on Spark
+ * plan, no bucket required.
+ *
+ * Trade-off: Firestore docs cap at 1 MB. We expect callers to pass a
+ * thumbnail-sized JPEG (~256 × 256). The data URL fits comfortably in the
+ * doc and `<Image source={{ uri: 'data:image/jpeg;base64,...' }} />`
+ * renders it natively in RN.
+ */
+export async function setProfilePhotoFromBase64(
+  uid: string,
+  base64: string,
+  mime: string = 'image/jpeg',
+): Promise<string> {
+  if (!base64) throw new Error('No image data to save.');
+  // Reject anything that'd push the user doc near Firestore's 1 MB limit.
+  // (1 MB / 1.37 base64 expansion ≈ 730 KB of payload.)
+  const sizeBytes = Math.ceil((base64.length * 3) / 4);
+  if (sizeBytes > 700 * 1024) {
+    throw new Error(
+      `Image is too large (${Math.round(
+        sizeBytes / 1024,
+      )} KB). Please pick a smaller photo or crop it.`,
+    );
+  }
+  const dataUrl = `data:${mime};base64,${base64}`;
+  await firebaseFirestore()
+    .collection(COLLECTIONS.USERS)
+    .doc(uid)
+    .update({ photoURL: dataUrl, updatedAt: serverTimestamp() });
+  return dataUrl;
 }
 
 /**

@@ -13,11 +13,12 @@ import {
   View,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
+import { GradientHeader } from '../components/GradientHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import { firebaseAuth } from '../config/firebase';
 import { deleteAccount } from '../services/authService';
 import { getUserProfile, updateUserProfile } from '../services/firestoreService';
-import { uploadProfileImage } from '../services/storageService';
+import { describeStorageError, setProfilePhotoFromBase64 } from '../services/storageService';
 import { colors, fontSize, radius, spacing } from '../theme';
 
 interface Props {
@@ -78,21 +79,39 @@ export function ProfileScreen({ onBack }: Props) {
 
   async function pickAndUploadPhoto() {
     if (uploading || saving) return;
+    // Aggressive resize + base64 — we store the data URL directly in
+    // Firestore so we never touch Firebase Storage (which requires the
+    // Blaze plan since Oct 2024). 256×256 @ q=0.6 lands well under the
+    // 700 KB safety cap enforced by setProfilePhotoFromBase64.
     const result = await launchImageLibrary({
       mediaType: 'photo',
       selectionLimit: 1,
-      quality: 0.8,
+      includeBase64: true,
+      maxWidth: 256,
+      maxHeight: 256,
+      quality: 0.6,
     });
     const asset = result.assets?.[0];
-    if (!asset?.uri) return;
+    if (!asset?.base64) return;
 
     setUploading(true);
     try {
-      const url = await uploadProfileImage(currentUser.uid, asset.uri);
-      setPhotoURL(url);
-      await firebaseAuth().currentUser?.updateProfile({ photoURL: url });
+      const dataUrl = await setProfilePhotoFromBase64(
+        currentUser.uid,
+        asset.base64,
+        asset.type ?? 'image/jpeg',
+      );
+      setPhotoURL(dataUrl);
+      // Firebase Auth's photoURL field has a tight size limit and won't
+      // accept a long data URL — silently skip if the SDK rejects it. The
+      // canonical source for the avatar is users/{uid}.photoURL anyway.
+      try {
+        await firebaseAuth().currentUser?.updateProfile({ photoURL: dataUrl });
+      } catch {
+        /* photoURL too long for Auth — fine, Firestore has it */
+      }
     } catch (e: any) {
-      Alert.alert('Upload failed', e?.message ?? 'Try again.');
+      Alert.alert('Upload failed', describeStorageError(e));
     } finally {
       setUploading(false);
     }
@@ -193,13 +212,13 @@ export function ProfileScreen({ onBack }: Props) {
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={styles.header}>
+      <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
           <Text style={styles.back}>‹ Back</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Profile</Text>
         <View style={{ width: 60 }} />
-      </View>
+      </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Pressable
@@ -325,7 +344,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md + 2,
-    backgroundColor: colors.headerDark,
   },
   back: { color: colors.headerText, fontSize: fontSize.lg - 1, fontWeight: '600', width: 60 },
   headerTitle: {

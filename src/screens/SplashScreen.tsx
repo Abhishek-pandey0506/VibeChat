@@ -1,14 +1,7 @@
 /**
- * Splash screen rendered by RN while we wait for the auth state listener
- * to fire for the first time (`useAuth.initializing === true`).
- *
- * White background, big centered logo (the wordmark + tagline live inside
- * the PNG itself), and three pulsing purple dots with a "Loading..." label
- * at the bottom — same look as the reference loader.
- *
- * The *native* launch screens (Android: SplashTheme drawable, iOS:
- * LaunchScreen.storyboard) paint the same white + logo so the OS → RN
- * handoff is seamless.
+ * Splash screen — rendered while we wait for the auth listener to fire for
+ * the first time. White background, centered gradient app icon, wordmark,
+ * tagline, and a ring loader at the bottom with "Loading…" text.
  */
 
 import { useEffect, useRef } from 'react';
@@ -17,39 +10,6 @@ import { colors, fontSize, spacing } from '../theme';
 
 const LOGO = require('../assets/Logo.png');
 
-function LoadingDot({ delay }: { delay: number }) {
-  const v = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.timing(v, {
-          toValue: 1,
-          duration: 420,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(v, {
-          toValue: 0,
-          duration: 420,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [delay, v]);
-
-  const opacity = v.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] });
-  const scale = v.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1.25] });
-
-  return (
-    <Animated.View style={[styles.dot, { opacity, transform: [{ scale }] }]} />
-  );
-}
-
 export function SplashScreen() {
   return (
     <View style={styles.container}>
@@ -57,19 +17,41 @@ export function SplashScreen() {
 
       <View style={styles.center}>
         <Image source={LOGO} style={styles.logo} resizeMode="contain" />
+        <Text style={styles.wordmark}>
+          Vibe<Text style={{ color: colors.primary }}>Chat</Text>
+        </Text>
+        <Text style={styles.tag}>Chat. Connect. Vibe.</Text>
       </View>
 
-      <View style={styles.loaderWrap}>
-        <View style={styles.dots}>
-          <LoadingDot delay={0} />
-          <LoadingDot delay={150} />
-          <LoadingDot delay={300} />
-        </View>
-        <Text style={styles.loadingText}>Loading...</Text>
+      <View style={styles.loaderRow}>
+        <RingLoader />
+        <Text style={styles.loadingText}>Loading…</Text>
       </View>
     </View>
   );
 }
+
+function RingLoader() {
+  const v = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const a = Animated.loop(
+      Animated.timing(v, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    a.start();
+    return () => a.stop();
+  }, [v]);
+  const spin = v.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  return (
+    <Animated.View style={[styles.ring, { transform: [{ rotate: spin }] }]} />
+  );
+}
+
+const ICON_SIZE = 92;
 
 const styles = StyleSheet.create({
   container: {
@@ -79,30 +61,42 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   center: { alignItems: 'center' },
+
   logo: {
-    width: 340,
-    height: 340,
+    width: 128,
+    height: 128,
+    marginBottom: spacing.md + 4,
   },
-  loaderWrap: {
+
+  wordmark: {
+    fontSize: fontSize.display,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -0.5,
+  },
+  tag: {
+    fontSize: fontSize.md,
+    color: colors.text3,
+    marginTop: spacing.xs,
+  },
+
+  loaderRow: {
     position: 'absolute',
-    bottom: 96,
+    bottom: spacing.xxl + spacing.lg,
     alignItems: 'center',
   },
-  dots: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: spacing.sm + 2,
-  },
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: colors.primary, // #7C3AED — purple/blue accent
+  ring: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2.5,
+    borderColor: colors.primarySoft,
+    borderTopColor: colors.primary,
   },
   loadingText: {
-    color: colors.textMuted,
+    color: colors.text3,
     fontSize: fontSize.sm + 1,
     fontWeight: '600',
-    letterSpacing: 0.3,
+    marginTop: spacing.xs,
   },
 });

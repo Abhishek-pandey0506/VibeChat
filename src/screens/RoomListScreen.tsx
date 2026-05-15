@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { GradientHeader } from '../components/GradientHeader';
 import { useAuthContext } from '../contexts/AuthContext';
 import { getUserProfile, subscribeUserRooms } from '../services/firestoreService';
 import { colors, fontSize, radius, spacing } from '../theme';
@@ -99,7 +100,7 @@ export function RoomListScreen({ onOpenRoom, onNewChat, onOpenProfile }: Props) 
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <GradientHeader style={styles.header}>
         <Text style={styles.headerTitle}>Chats</Text>
         <Pressable
           onPress={onOpenProfile}
@@ -113,7 +114,7 @@ export function RoomListScreen({ onOpenRoom, onNewChat, onOpenProfile }: Props) 
             </Text>
           )}
         </Pressable>
-      </View>
+      </GradientHeader>
 
       {loading ? (
         <View style={styles.center}>
@@ -225,8 +226,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md + 2,
-    backgroundColor: colors.headerDark,
     gap: spacing.md,
+    // backgroundColor handled by <GradientHeader>.
   },
   headerTitle: {
     flex: 1,

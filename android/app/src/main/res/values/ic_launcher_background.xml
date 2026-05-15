@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#E5E8E5</color>
+    <!-- Adaptive icon background tile (Android 8.0+). Deep violet matches
+         the brand mark so the launcher tile reads as one continuous
+         purple square when masked. -->
+    <color name="ic_launcher_background">#5B21B6</color>
 </resources>

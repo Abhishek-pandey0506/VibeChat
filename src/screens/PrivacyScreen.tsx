@@ -1,96 +1,138 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { colors, fontSize, spacing } from '../theme';
+import { Linking, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { GradientHeader } from '../components/GradientHeader';
+import { colors, fontSize, radius, spacing } from '../theme';
 
 interface Props {
   onBack: () => void;
 }
 
+interface Section {
+  n: string;
+  title: string;
+  body?: string;
+  bullets?: { label: string; text: string }[];
+}
+
+const SECTIONS: Section[] = [
+  {
+    n: '01',
+    title: 'What we collect',
+    bullets: [
+      { label: 'Account info', text: 'name, email, optional photo from Google.' },
+      { label: 'Phone number', text: 'set once so contacts can find you.' },
+      { label: 'Messages', text: 'text, photos, video stored so recipients can receive them.' },
+      { label: 'Device info', text: 'push token, app version, basic diagnostic logs.' },
+      { label: 'Presence', text: 'online status and last-seen so chats feel live.' },
+    ],
+  },
+  {
+    n: '02',
+    title: 'How we use it',
+    body:
+      "To deliver messages, keep your account secure, and send push notifications. We don't sell your data, and we never use message content to train AI.",
+  },
+  {
+    n: '03',
+    title: 'Storage & security',
+    body:
+      'Stored in Google Firebase with industry-standard encryption in transit and at rest. Strict security rules ensure only you and your chat participants can read your data.',
+  },
+  {
+    n: '04',
+    title: 'Sharing',
+    body:
+      'Messages are shared with the chat participants you pick. We use service providers (push notifications, analytics) bound by data-protection agreements. Nothing else.',
+  },
+  {
+    n: '05',
+    title: 'Your choices',
+    body:
+      "Edit your profile anytime, sign out from any device, or delete your account from Profile → Danger zone. Deleting removes your profile + photos. Your messages stay in other people's chats.",
+  },
+];
+
 export function PrivacyScreen({ onBack }: Props) {
   return (
     <View style={styles.flex}>
-      <View style={styles.header}>
+      {/* Match the gradient's dark indigo start so the system status bar
+          blends seamlessly with the header instead of leaving a white strip
+          with hard-to-read icons (the time/battery were near-invisible
+          against the previous light background). */}
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={colors.brandFrom}
+        translucent={false}
+      />
+      <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
           <Text style={styles.back}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle}>Privacy Policy</Text>
+        <Text style={styles.headerTitle}>Privacy policy</Text>
         <View style={{ width: 28 }} />
-      </View>
+      </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body}>
-        <Text style={styles.updated}>Last updated: May 2026</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.metaLabel}>Last updated</Text>
+          <View style={styles.metaDot} />
+          <Text style={styles.metaValue}>May 2026</Text>
+        </View>
 
-        <Section title="Overview">
-          This Privacy Policy explains what information VibeChat collects, how
-          we use it, and the choices you have. We try to collect as little as
-          possible and only what's needed to deliver chat.
-        </Section>
+        <Text style={styles.hero}>
+          Your data,{'\n'}
+          <Text style={styles.heroAccent}>your control.</Text>
+        </Text>
+        <Text style={styles.heroSub}>
+          We collect as little as possible — only what's needed to deliver chat.
+        </Text>
 
-        <Section title="Information We Collect">
-          {`• Account info — name, email, and (optional) profile photo from your Google account.\n• Phone number — provided once during onboarding, used so contacts can find you.\n• Messages — text, photos, and videos you send, stored so recipients can receive them.\n• Device info — FCM push token, app version, and basic diagnostic logs.\n• Presence — online status and "last seen" timestamps so chats feel live.`}
-        </Section>
+        {SECTIONS.map(s => (
+          <View key={s.n} style={styles.section}>
+            <View style={styles.numChip}>
+              <Text style={styles.numChipText}>{s.n}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.sectionTitle}>{s.title}</Text>
+              {s.body ? <Text style={styles.sectionBody}>{s.body}</Text> : null}
+              {s.bullets
+                ? s.bullets.map((b, i) => (
+                    <View key={i} style={styles.bulletRow}>
+                      <View style={styles.bulletDot} />
+                      <Text style={styles.bulletText}>
+                        <Text style={styles.bulletLabel}>{b.label}</Text> — {b.text}
+                      </Text>
+                    </View>
+                  ))
+                : null}
+            </View>
+          </View>
+        ))}
 
-        <Section title="How We Use It">
-          We use this information to deliver messages, keep your account
-          secure, send push notifications for new chats, and operate the
-          Service. We don't sell your personal information, and we don't use
-          your message content to train AI models.
-        </Section>
-
-        <Section title="Storage and Security">
-          Data is stored in Google Firebase (Firestore, Storage, Authentication)
-          with industry-standard encryption in transit and at rest. Access is
-          governed by Firestore and Storage security rules — we only let you
-          read and write data that belongs to you or the chat rooms you're in.
-        </Section>
-
-        <Section title="Sharing">
-          Messages are shared with the participants of the chats you choose.
-          We may share data with service providers (e.g. Google Cloud) strictly
-          to run the Service. We comply with lawful government requests but
-          push back against overbroad ones.
-        </Section>
-
-        <Section title="Your Choices">
-          {`• Edit profile — update your name and photo anytime in Profile.\n• Sign out — clears your session on this device.\n• Delete account — contact support and we'll remove your account and message history.`}
-        </Section>
-
-        <Section title="Children">
-          VibeChat is not for users under 13 (or under 16 in some jurisdictions).
-          If we learn we've collected data from a child below that age we'll
-          delete it.
-        </Section>
-
-        <Section title="Changes">
-          If we materially change this policy we'll notify you in the app and
-          update the date above. Continued use after the change means you
-          accept it.
-        </Section>
-
-        <Section title="Contact">
-          Questions, requests, or complaints: amalstack06@gmail.com.
-        </Section>
+        <View style={styles.contactCard}>
+          <Text style={styles.contactTitle}>Questions?</Text>
+          <Text style={styles.contactBody}>
+            Reach our team at{' '}
+            <Text
+              style={styles.contactLink}
+              onPress={() => Linking.openURL('mailto:amalstack06@gmail.com')}>
+              amalstack06@gmail.com
+            </Text>{' '}
+            — we usually reply within a day.
+          </Text>
+        </View>
       </ScrollView>
-    </View>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      <Text style={styles.sectionBody}>{children}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
+
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
-    backgroundColor: colors.headerDark,
   },
   back: { color: colors.headerText, fontSize: 28, width: 28, textAlign: 'center' },
   headerTitle: {
@@ -100,23 +142,101 @@ const styles = StyleSheet.create({
     fontSize: fontSize.lg,
     fontWeight: '700',
   },
+
   body: { padding: spacing.xl, paddingBottom: spacing.xxl },
-  updated: {
-    color: colors.textLight,
-    fontSize: fontSize.sm,
-    marginBottom: spacing.lg,
-    fontStyle: 'italic',
+
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
   },
-  section: { marginBottom: spacing.lg },
+  metaLabel: {
+    color: colors.text3,
+    fontSize: fontSize.xs + 1,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  metaDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: colors.text3 },
+  metaValue: { color: colors.text, fontSize: fontSize.sm + 1, fontWeight: '600' },
+
+  hero: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -1.2,
+    lineHeight: 44,
+    marginBottom: spacing.sm,
+  },
+  heroAccent: { color: colors.primary },
+  heroSub: {
+    color: colors.text2,
+    fontSize: fontSize.md + 1,
+    marginBottom: spacing.xl + 4,
+    lineHeight: 22,
+  },
+
+  section: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.xl },
+  numChip: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  numChipText: {
+    color: colors.primary,
+    fontWeight: '800',
+    fontSize: fontSize.md,
+    letterSpacing: 0.5,
+  },
   sectionTitle: {
     color: colors.text,
-    fontSize: fontSize.md + 1,
+    fontSize: fontSize.lg,
     fontWeight: '700',
+    marginBottom: 6,
+  },
+  sectionBody: { color: colors.text2, fontSize: fontSize.md - 1, lineHeight: 21 },
+
+  bulletRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    marginTop: 6,
+  },
+  bulletDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: colors.primary,
+    marginTop: 8,
+  },
+  bulletText: {
+    flex: 1,
+    color: colors.text2,
+    fontSize: fontSize.md - 1,
+    lineHeight: 21,
+  },
+  bulletLabel: { color: colors.text, fontWeight: '700' },
+
+  contactCard: {
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primarySoft,
+  },
+  contactTitle: {
+    fontSize: fontSize.lg,
+    fontWeight: '800',
+    color: colors.primary,
     marginBottom: spacing.xs,
   },
-  sectionBody: {
-    color: colors.textMuted,
-    fontSize: fontSize.md - 1,
-    lineHeight: 22,
+  contactBody: { color: colors.text2, fontSize: fontSize.md - 1, lineHeight: 21 },
+  contactLink: {
+    color: colors.primary,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });
