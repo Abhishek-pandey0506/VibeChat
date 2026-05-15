@@ -1,87 +1,154 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StatusBar, StyleSheet, View, useColorScheme } from 'react-native';
+import { StatusBar, StyleSheet, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAuth } from './src/hooks/useAuth';
+import { AuthProvider, useAuthContext } from './src/contexts/AuthContext';
 import { configureGoogleSignIn } from './src/services/authService';
+import { subscribeUserProfile } from './src/services/firestoreService';
 import {
   startPresenceTracking,
   type PresenceHandle,
 } from './src/services/presenceService';
 import { LoginScreen } from './src/screens/LoginScreen';
-import { RegisterScreen } from './src/screens/RegisterScreen';
 import { RoomListScreen, type RoomListItem } from './src/screens/RoomListScreen';
 import { ChatScreen } from './src/screens/ChatScreen';
 import { NewChatScreen } from './src/screens/NewChatScreen';
+import { CreateGroupScreen } from './src/screens/CreateGroupScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
+import { SplashScreen } from './src/screens/SplashScreen';
+import { CompleteProfileScreen } from './src/screens/CompleteProfileScreen';
+import { TermsScreen } from './src/screens/TermsScreen';
+import { PrivacyScreen } from './src/screens/PrivacyScreen';
 import { colors } from './src/theme';
+import type { UserProfile } from './src/types/models';
 
 // Configure Google Sign-In SDK once at module load.
 configureGoogleSignIn();
 
 function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _ = useColorScheme();
   return (
     <SafeAreaProvider>
-      <StatusBar
-        barStyle="light-content"
-        backgroundColor={colors.headerDark}
-      />
-      <AppContent />
+      <StatusBar barStyle="light-content" backgroundColor={colors.primary} />
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }
 
-type AuthScreen = 'login' | 'register';
+// Pre-auth routes (visible to signed-out users + onboarding policies)
+type AuthRoute =
+  | { name: 'login' }
+  | { name: 'terms' }
+  | { name: 'privacy' };
 
-// Lightweight in-app navigation. A real app should pull in
-// @react-navigation/native; this works for the scaffold without an extra dep.
-type Route =
+// Post-auth routes (visible to signed-in users with a complete profile)
+type AppRoute =
   | { name: 'rooms' }
   | { name: 'newChat' }
+  | { name: 'createGroup' }
   | { name: 'profile' }
   | { name: 'chat'; roomId: string; title: string; otherUid?: string };
 
+const SPLASH_MIN_MS = 3000;
+
 function AppContent() {
   const insets = useSafeAreaInsets();
-  const { user, initializing } = useAuth();
-  const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
-  const [route, setRoute] = useState<Route>({ name: 'rooms' });
+  const { user, initializing } = useAuthContext();
+  const [authRoute, setAuthRoute] = useState<AuthRoute>({ name: 'login' });
+  const [route, setRoute] = useState<AppRoute>({ name: 'rooms' });
+  const [minSplashElapsed, setMinSplashElapsed] = useState(false);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const presenceRef = useRef<PresenceHandle | null>(null);
 
-  // Presence lifecycle: start tracking when a user signs in; stop on sign-out.
+  // Hold the splash for at least SPLASH_MIN_MS.
   useEffect(() => {
-    if (user) {
-      presenceRef.current = startPresenceTracking(user.uid);
+    const t = setTimeout(() => setMinSplashElapsed(true), SPLASH_MIN_MS);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Subscribe to the signed-in user's profile so we can detect when it
+  // becomes "complete" (has phoneNumber) and route past the onboarding form.
+  useEffect(() => {
+    if (!user) {
+      setProfile(null);
+      setProfileLoading(false);
+      return;
     }
+    setProfileLoading(true);
+    const unsub = subscribeUserProfile(user.uid, next => {
+      setProfile(next);
+      setProfileLoading(false);
+    });
+    return unsub;
+  }, [user]);
+
+  // Presence lifecycle: only run for users with a completed profile so
+  // we don't write presence for someone stuck on the onboarding form.
+  useEffect(() => {
+    if (!user || !profile?.phoneNumber) return;
+    presenceRef.current = startPresenceTracking(user.uid);
     return () => {
       const handle = presenceRef.current;
       presenceRef.current = null;
-      handle?.stop().catch(() => {
-        // best-effort cleanup
-      });
+      handle?.stop().catch(() => {});
     };
+  }, [user, profile?.phoneNumber]);
+
+  // Reset in-app stack on sign-out.
+  useEffect(() => {
+    if (!user) {
+      setRoute({ name: 'rooms' });
+      setAuthRoute({ name: 'login' });
+    }
   }, [user]);
 
-  if (initializing) {
-    return (
-      <View style={[styles.center, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
-        <ActivityIndicator size="large" color={colors.primaryDark} />
-      </View>
-    );
+  // Splash gate.
+  if (initializing || !minSplashElapsed) {
+    return <SplashScreen />;
   }
 
+  // ─── Signed-out branch ──────────────────────────────────────────────
   if (!user) {
     return (
-      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.bg }]}>
-        {authScreen === 'login' ? (
-          <LoginScreen onGoRegister={() => setAuthScreen('register')} />
-        ) : (
-          <RegisterScreen onGoLogin={() => setAuthScreen('login')} />
+      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.bgSoft }]}>
+        {authRoute.name === 'login' && (
+          <LoginScreen
+            onOpenTerms={() => setAuthRoute({ name: 'terms' })}
+            onOpenPrivacy={() => setAuthRoute({ name: 'privacy' })}
+          />
+        )}
+        {authRoute.name === 'terms' && (
+          <TermsScreen onBack={() => setAuthRoute({ name: 'login' })} />
+        )}
+        {authRoute.name === 'privacy' && (
+          <PrivacyScreen onBack={() => setAuthRoute({ name: 'login' })} />
         )}
       </View>
     );
   }
 
+  // ─── Signed-in: gate behind profile completion ───────────────────────
+  // While we don't know yet, keep the splash on screen.
+  if (profileLoading && !profile) {
+    return <SplashScreen />;
+  }
+
+  // No phone number means this is either a brand-new Google sign-in or an
+  // older account that pre-dates the onboarding form — either way, show it.
+  // Parent bg is the header purple so the area behind the status bar
+  // matches the in-screen header instead of flashing white.
+  if (!profile?.phoneNumber) {
+    return (
+      <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.headerDark }]}>
+        <CompleteProfileScreen />
+      </View>
+    );
+  }
+
+  // ─── Signed-in + profile complete: normal app ────────────────────────
   return (
     <View
       style={[
@@ -89,13 +156,11 @@ function AppContent() {
         {
           paddingTop: insets.top,
           paddingBottom: insets.bottom,
-          // Header screens fill behind the top inset with dark green.
           backgroundColor: routeUsesDarkHeader(route) ? colors.headerDark : colors.bg,
         },
       ]}>
       {route.name === 'rooms' && (
         <RoomListScreen
-          user={user}
           onOpenRoom={(room: RoomListItem) =>
             setRoute({
               name: 'chat',
@@ -110,19 +175,24 @@ function AppContent() {
       )}
       {route.name === 'newChat' && (
         <NewChatScreen
-          user={user}
           onBack={() => setRoute({ name: 'rooms' })}
           onRoomReady={(roomId, title, otherUid) =>
             setRoute({ name: 'chat', roomId, title, otherUid })
           }
+          onCreateGroup={() => setRoute({ name: 'createGroup' })}
+        />
+      )}
+      {route.name === 'createGroup' && (
+        <CreateGroupScreen
+          onBack={() => setRoute({ name: 'newChat' })}
+          onGroupReady={(roomId, title) => setRoute({ name: 'chat', roomId, title })}
         />
       )}
       {route.name === 'profile' && (
-        <ProfileScreen user={user} onBack={() => setRoute({ name: 'rooms' })} />
+        <ProfileScreen onBack={() => setRoute({ name: 'rooms' })} />
       )}
       {route.name === 'chat' && (
         <ChatScreen
-          user={user}
           roomId={route.roomId}
           title={route.title}
           otherUid={route.otherUid}
@@ -133,13 +203,18 @@ function AppContent() {
   );
 }
 
-function routeUsesDarkHeader(r: Route): boolean {
-  return r.name === 'rooms' || r.name === 'chat' || r.name === 'profile';
+function routeUsesDarkHeader(r: AppRoute): boolean {
+  return (
+    r.name === 'rooms' ||
+    r.name === 'chat' ||
+    r.name === 'profile' ||
+    r.name === 'newChat' ||
+    r.name === 'createGroup'
+  );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
 });
 
 export default App;

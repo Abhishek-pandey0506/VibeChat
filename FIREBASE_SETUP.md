@@ -52,6 +52,14 @@ npm run ios
 
 If you see `[Firebase] No default app configured`, the credentials files above are missing or weren't added to the iOS target.
 
+## 3a. Enable Phone Auth (SMS OTP)
+
+1. **Firebase Console → Authentication → Sign-in method → Phone → Enable.**
+2. **Android.** The same SHA-1 you used for Google Sign-In is required for Phone Auth's silent reCAPTCHA. If it's already added, you're done. Otherwise add it (Project settings → Your Android app → Add fingerprint).
+3. **iOS.** Phone Auth uses APNs silent push for verification. Upload an APNs auth key in **Project settings → Cloud Messaging → Apple app configuration** if you haven't already. Also enable **Push Notifications** capability in Xcode.
+4. **Test numbers (highly recommended during dev)** — add fictional numbers + codes in **Sign-in method → Phone → Phone numbers for testing**. They don't cost SMS quota and skip carrier delivery. e.g. `+15555550100` / `123456`.
+5. From the app, tap **Continue with Phone** on the login screen, enter the number in international format (the screen prepends the country code you type), then enter the 6-digit OTP.
+
 ## 3b. Enable Google Sign-In (optional but recommended)
 
 1. **Firebase Console → Authentication → Sign-in method → Google → Enable.** Set a project support email.
@@ -118,15 +126,30 @@ index.js                    # registers FCM background handler (must be top-leve
 ## 7. Feature notes (post-MVP)
 
 Already wired:
-- Email/password and Google Sign-In.
+- Email/password, Google Sign-In, and Phone (SMS OTP) authentication.
+- Forgot-password flow that sends a Firebase Auth reset email.
 - Chat list with unread badges, last-message preview, and per-room timestamps.
-- Realtime messaging with WhatsApp-style date dividers ("Today / Yesterday / Monday / 12/05") and per-bubble timestamps.
-- Image attachments in chat (paperclip → gallery → Storage upload → image message).
+- Realtime messaging with date dividers ("Today / Yesterday / Monday / 12/05") and per-bubble timestamps.
+- Photo AND video attachments in chat (paperclip → action sheet → gallery → Storage upload → image/video message). Video uses `react-native-video`; a poster thumbnail is generated client-side via `react-native-create-thumbnail`.
+- Group chats (`CreateGroupScreen`) — pick multiple users, set a name, jump straight into the room.
 - Online + last-seen status, written through `presenceService` on AppState changes.
 - Long-press on a message: **Copy** (any) and **Delete for everyone** (own messages — implemented as a soft delete, rule-checked, no Cloud Function required).
 - Profile screen: edit display name, upload avatar, sign out.
+- Purple "VibeChat" brand theme (`src/theme.ts`) consistent across all screens.
 
 Things this scaffold deliberately does *not* do:
 - No navigation library. Drop in `@react-navigation/native` and replace the lightweight route switch in `App.tsx`.
-- No typing indicators / read receipts / voice notes / video calls — out of scope for the chat MVP.
+- No typing indicators / read receipts / voice notes / video CALLS (video *messages* are supported) — out of scope for the chat MVP.
 - No admin panel. The `delete` rule on `users` is `false` — do account deletions through the Admin SDK in a Cloud Function.
+
+## 8. After running `npm install` again
+
+`react-native-video`, `react-native-create-thumbnail`, `@react-native-google-signin/google-signin`, and `@react-native-clipboard/clipboard` are native modules.
+
+```bash
+npm install
+cd ios && pod install && cd ..
+npm run android   # or: npm run ios
+```
+
+The first install will autolink all four; no manual native steps beyond pod install. If iOS pod install fails on Apple Silicon, run `cd ios && arch -x86_64 pod install` once.

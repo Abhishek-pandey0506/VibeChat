@@ -15,7 +15,9 @@ import {
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { launchImageLibrary } from 'react-native-image-picker';
-import type { AuthUser } from '../services/authService';
+import Video from 'react-native-video';
+import { createThumbnail } from 'react-native-create-thumbnail';
+import { useAuthContext } from '../contexts/AuthContext';
 import {
   markRoomRead,
   sendMessage,
@@ -23,13 +25,12 @@ import {
   subscribeRoomMessages,
   subscribeUserPresence,
 } from '../services/firestoreService';
-import { uploadChatImage } from '../services/storageService';
+import { uploadChatImage, uploadChatVideo } from '../services/storageService';
 import { formatLastSeen } from '../services/presenceService';
 import { colors, fontSize, radius, spacing } from '../theme';
 import type { ChatMessage } from '../types/models';
 
 interface Props {
-  user: AuthUser;
   roomId: string;
   title: string;
   /** uid of the other 1:1 participant, if known. Drives presence in header. */
@@ -41,12 +42,17 @@ type Row =
   | { kind: 'msg'; msg: ChatMessage }
   | { kind: 'day'; key: string; label: string };
 
-export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
+export function ChatScreen({ roomId, title, otherUid, onBack }: Props) {
+  // App.tsx never renders this screen when signed out.
+  const { user } = useAuthContext();
+  const currentUser = user!;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [presenceLabel, setPresenceLabel] = useState<string | null>(null);
   const listRef = useRef<FlatList<Row>>(null);
@@ -65,11 +71,11 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
         },
       },
     );
-    markRoomRead(roomId, user.uid).catch(() => {
+    markRoomRead(roomId, currentUser.uid).catch(() => {
       // not fatal — counter will catch up on next read
     });
     return unsub;
-  }, [roomId, user.uid]);
+  }, [roomId, currentUser.uid]);
 
   // Presence in the header (1:1 only — group chats don't show a single status).
   useEffect(() => {
@@ -92,7 +98,7 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
     setSending(true);
     setError('');
     try {
-      await sendMessage({ roomId, senderId: user.uid, type: 'text', text });
+      await sendMessage({ roomId, senderId: currentUser.uid, type: 'text', text });
       setDraft('');
     } catch (e: any) {
       setError(e?.message ?? 'Failed to send.');
@@ -112,8 +118,8 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
     setUploadingImage(true);
     setError('');
     try {
-      const url = await uploadChatImage(roomId, user.uid, asset.uri);
-      await sendMessage({ roomId, senderId: user.uid, type: 'image', imageUrl: url });
+      const url = await uploadChatImage(roomId, currentUser.uid, asset.uri);
+      await sendMessage({ roomId, senderId: currentUser.uid, type: 'image', imageUrl: url });
     } catch (e: any) {
       setError(e?.message ?? 'Image upload failed.');
     } finally {
@@ -121,9 +127,77 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
     }
   }
 
+  async function handlePickAndSendVideo() {
+    const result = await launchImageLibrary({
+      mediaType: 'video',
+      selectionLimit: 1,
+      videoQuality: 'medium',
+    });
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    setUploadingVideo(true);
+    setError('');
+    try {
+      // Generate a poster thumbnail so the bubble has something to show
+      // before the video is tapped. Failing to generate is non-fatal.
+      let posterUri: string | undefined;
+      try {
+        const thumb = await createThumbnail({ url: asset.uri, timeStamp: 1000 });
+        posterUri = thumb.path;
+      } catch {
+        // ignore — we'll show a placeholder behind the play button instead
+      }
+      const { videoUrl, posterUrl } = await uploadChatVideo(
+        roomId,
+        currentUser.uid,
+        asset.uri,
+        { posterUri },
+      );
+      await sendMessage({
+        roomId,
+        senderId: currentUser.uid,
+        type: 'video',
+        videoUrl,
+        videoPosterUrl: posterUrl,
+      });
+    } catch (e: any) {
+      setError(e?.message ?? 'Video upload failed.');
+    } finally {
+      setUploadingVideo(false);
+    }
+  }
+
+  function showAttachmentSheet() {
+    if (uploadingImage || uploadingVideo) return;
+    const actions: { label: string; action: () => void }[] = [
+      { label: 'Photo', action: handlePickAndSendImage },
+      { label: 'Video', action: handlePickAndSendVideo },
+    ];
+
+    if (Platform.OS === 'ios') {
+      const labels = [...actions.map(a => a.label), 'Cancel'];
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: labels, cancelButtonIndex: labels.length - 1 },
+        idx => {
+          if (idx >= 0 && idx < actions.length) actions[idx].action();
+        },
+      );
+    } else {
+      Alert.alert(
+        'Send attachment',
+        undefined,
+        [
+          ...actions.map(a => ({ text: a.label, onPress: a.action })),
+          { text: 'Cancel', style: 'cancel' as const },
+        ],
+        { cancelable: true },
+      );
+    }
+  }
+
   function handleLongPressMessage(msg: ChatMessage) {
     if (msg.deleted) return;
-    const isMine = msg.senderId === user.uid;
+    const isMine = msg.senderId === currentUser.uid;
     const canCopy = msg.type === 'text' && !!msg.text;
 
     const actions: { label: string; action: () => void; destructive?: boolean }[] = [];
@@ -205,7 +279,7 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
       <View style={styles.chatBg}>
         {loading ? (
           <View style={styles.center}>
-            <ActivityIndicator color={colors.primaryDark} />
+            <ActivityIndicator color={colors.primary} />
           </View>
         ) : (
           <FlatList
@@ -230,7 +304,9 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
               return (
                 <MessageBubble
                   msg={item.msg}
-                  mine={item.msg.senderId === user.uid}
+                  mine={item.msg.senderId === currentUser.uid}
+                  isPlaying={playingVideoId === item.msg.id}
+                  onPlayVideo={() => setPlayingVideoId(item.msg.id)}
                   onLongPress={() => handleLongPressMessage(item.msg)}
                 />
               );
@@ -243,12 +319,12 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
 
       <View style={styles.inputBar}>
         <Pressable
-          onPress={handlePickAndSendImage}
-          disabled={uploadingImage}
+          onPress={showAttachmentSheet}
+          disabled={uploadingImage || uploadingVideo}
           hitSlop={6}
           style={({ pressed }) => [styles.attach, pressed && { opacity: 0.6 }]}>
-          {uploadingImage ? (
-            <ActivityIndicator color={colors.primaryDark} />
+          {uploadingImage || uploadingVideo ? (
+            <ActivityIndicator color={colors.primary} />
           ) : (
             <Text style={styles.attachIcon}>📎</Text>
           )}
@@ -281,22 +357,30 @@ export function ChatScreen({ user, roomId, title, otherUid, onBack }: Props) {
 function MessageBubble({
   msg,
   mine,
+  isPlaying,
+  onPlayVideo,
   onLongPress,
 }: {
   msg: ChatMessage;
   mine: boolean;
+  isPlaying: boolean;
+  onPlayVideo: () => void;
   onLongPress: () => void;
 }) {
   const time = msg.createdAt?.toDate?.()
     ? formatTime(msg.createdAt.toDate())
     : '';
+  const textColor = mine ? styles.bubbleTextMine : styles.bubbleTextTheirs;
+  const timeColor = mine ? styles.bubbleTimeMine : styles.bubbleTimeTheirs;
 
   if (msg.deleted) {
     return (
       <View style={[styles.bubbleRow, mine ? styles.rowRight : styles.rowLeft]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-          <Text style={styles.deletedText}>🚫 This message was deleted</Text>
-          {time ? <Text style={styles.bubbleTime}>{time}</Text> : null}
+          <Text style={[styles.deletedText, mine && { color: 'rgba(255,255,255,0.85)' }]}>
+            🚫 This message was deleted
+          </Text>
+          {time ? <Text style={[styles.bubbleTime, timeColor]}>{time}</Text> : null}
         </View>
       </View>
     );
@@ -310,13 +394,37 @@ function MessageBubble({
         style={({ pressed }) => [
           styles.bubble,
           mine ? styles.bubbleMine : styles.bubbleTheirs,
-          pressed && { opacity: 0.85 },
+          pressed && { opacity: 0.9 },
         ]}>
         {msg.type === 'image' && msg.imageUrl ? (
-          <Image source={{ uri: msg.imageUrl }} style={styles.image} resizeMode="cover" />
+          <Image source={{ uri: msg.imageUrl }} style={styles.media} resizeMode="cover" />
         ) : null}
-        {msg.text ? <Text style={styles.bubbleText}>{msg.text}</Text> : null}
-        {time ? <Text style={styles.bubbleTime}>{time}</Text> : null}
+
+        {msg.type === 'video' && msg.videoUrl ? (
+          isPlaying ? (
+            <Video
+              source={{ uri: msg.videoUrl }}
+              style={styles.media}
+              controls
+              paused={false}
+              resizeMode="cover"
+            />
+          ) : (
+            <Pressable onPress={onPlayVideo} style={styles.videoPoster}>
+              {msg.videoPosterUrl ? (
+                <Image source={{ uri: msg.videoPosterUrl }} style={styles.media} resizeMode="cover" />
+              ) : (
+                <View style={[styles.media, styles.videoPlaceholder]} />
+              )}
+              <View style={styles.playButton}>
+                <Text style={styles.playIcon}>▶</Text>
+              </View>
+            </Pressable>
+          )
+        ) : null}
+
+        {msg.text ? <Text style={[styles.bubbleText, textColor]}>{msg.text}</Text> : null}
+        {time ? <Text style={[styles.bubbleTime, timeColor]}>{time}</Text> : null}
       </Pressable>
     </View>
   );
@@ -427,21 +535,34 @@ const styles = StyleSheet.create({
   },
   bubbleMine: { backgroundColor: colors.bubbleMine, borderBottomRightRadius: 4 },
   bubbleTheirs: { backgroundColor: colors.bubbleTheirs, borderBottomLeftRadius: 4 },
-  bubbleText: { fontSize: fontSize.md, color: colors.text, lineHeight: 20 },
-  bubbleTime: {
-    fontSize: 10,
-    color: colors.bubbleMeta,
-    alignSelf: 'flex-end',
-    marginTop: 2,
-  },
+  bubbleText: { fontSize: fontSize.md, lineHeight: 20 },
+  bubbleTextMine: { color: colors.bubbleMineText },
+  bubbleTextTheirs: { color: colors.bubbleTheirsText },
+  bubbleTime: { fontSize: 10, alignSelf: 'flex-end', marginTop: 2 },
+  bubbleTimeMine: { color: colors.bubbleMeta },
+  bubbleTimeTheirs: { color: colors.bubbleMetaTheirs },
   deletedText: { fontStyle: 'italic', color: colors.textMuted, fontSize: fontSize.sm + 1 },
 
-  image: {
+  media: {
     width: 220,
     height: 220,
     borderRadius: radius.md,
     marginBottom: spacing.xs,
   },
+  videoPoster: { position: 'relative', alignItems: 'center', justifyContent: 'center' },
+  videoPlaceholder: { backgroundColor: '#1F1F2E' },
+  playButton: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    top: '50%',
+    marginTop: -28,
+  },
+  playIcon: { color: '#fff', fontSize: 22, marginLeft: 4 },
 
   errorBar: {
     color: colors.error,
@@ -482,7 +603,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },

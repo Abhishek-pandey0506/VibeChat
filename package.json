@@ -21,7 +21,11 @@
     "@react-native-firebase/messaging": "^21.6.1",
     "react-native-image-picker": "^7.1.2",
     "@react-native-google-signin/google-signin": "^13.1.0",
-    "@react-native-clipboard/clipboard": "^1.14.3"
+    "@react-native-clipboard/clipboard": "^1.14.3",
+    "react-native-video": "^6.7.0",
+    "react-native-create-thumbnail": "^2.0.0",
+    "@react-native-async-storage/async-storage": "^2.1.0",
+    "react-native-contacts": "^8.0.5"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

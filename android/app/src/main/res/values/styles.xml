@@ -6,4 +6,19 @@
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     </style>
 
+    <!--
+        Splash theme — shown for the brief moment between OS launch and the
+        JS bundle painting its first frame. We use the same purple as the
+        in-app JS SplashScreen so the transition is invisible.
+        MainActivity should opt into this theme via android:theme="@style/SplashTheme"
+        in AndroidManifest.xml.
+    -->
+    <style name="SplashTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:statusBarColor">@android:color/white</item>
+        <item name="android:navigationBarColor">@android:color/white</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
 </resources>

@@ -3,48 +3,79 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
-import { logout, type AuthUser } from '../services/authService';
+import { useAuthContext } from '../contexts/AuthContext';
 import { firebaseAuth } from '../config/firebase';
 import { getUserProfile, updateUserProfile } from '../services/firestoreService';
 import { uploadProfileImage } from '../services/storageService';
 import { colors, fontSize, radius, spacing } from '../theme';
 
 interface Props {
-  user: AuthUser;
   onBack: () => void;
 }
 
-export function ProfileScreen({ user, onBack }: Props) {
-  const [displayName, setDisplayName] = useState(user.displayName ?? '');
-  const [photoURL, setPhotoURL] = useState<string | undefined>(user.photoURL ?? undefined);
+/**
+ * Split a stored phoneNumber (e.g. "+919876543210") back into country code
+ * and 10-digit national number for editing. Defensive against odd formats.
+ */
+function splitPhone(stored?: string): { country: string; digits: string } {
+  if (!stored) return { country: '+91', digits: '' };
+  const cleaned = stored.replace(/[^\d+]/g, '');
+  // Take the last 10 digits as the local number; everything before is the
+  // country code.
+  if (cleaned.replace(/\D/g, '').length >= 10) {
+    const digits = cleaned.slice(-10);
+    let country = cleaned.slice(0, -10);
+    if (!country) country = '+91';
+    if (!country.startsWith('+')) country = `+${country.replace(/\D/g, '')}`;
+    return { country, digits };
+  }
+  return { country: '+91', digits: cleaned.replace(/\D/g, '') };
+}
+
+export function ProfileScreen({ onBack }: Props) {
+  const { user, signOut } = useAuthContext();
+  const currentUser = user!;
+
+  const [displayName, setDisplayName] = useState(currentUser.displayName ?? '');
+  const [photoURL, setPhotoURL] = useState<string | undefined>(currentUser.photoURL ?? undefined);
+  const [country, setCountry] = useState('+91');
+  const [phoneDigits, setPhoneDigits] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const profile = await getUserProfile(user.uid);
+      const profile = await getUserProfile(currentUser.uid);
       if (cancelled) return;
       if (profile) {
         setDisplayName(profile.displayName ?? '');
         setPhotoURL(profile.photoURL ?? undefined);
+        const { country: c, digits } = splitPhone(profile.phoneNumber);
+        setCountry(c);
+        setPhoneDigits(digits);
       }
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [user.uid]);
+  }, [currentUser.uid]);
 
   async function pickAndUploadPhoto() {
+    if (uploading || saving) return;
     const result = await launchImageLibrary({
       mediaType: 'photo',
       selectionLimit: 1,
@@ -55,7 +86,7 @@ export function ProfileScreen({ user, onBack }: Props) {
 
     setUploading(true);
     try {
-      const url = await uploadProfileImage(user.uid, asset.uri);
+      const url = await uploadProfileImage(currentUser.uid, asset.uri);
       setPhotoURL(url);
       await firebaseAuth().currentUser?.updateProfile({ photoURL: url });
     } catch (e: any) {
@@ -68,16 +99,29 @@ export function ProfileScreen({ user, onBack }: Props) {
   async function handleSave() {
     const name = displayName.trim();
     if (!name) {
-      Alert.alert('Display name required');
+      setError('Display name is required.');
       return;
     }
+    // Phone is optional on Profile (already set during onboarding) but if the
+    // user typed something it must be a valid 10-digit number.
+    if (phoneDigits && phoneDigits.length !== 10) {
+      setError('Phone number must be exactly 10 digits.');
+      return;
+    }
+    setError('');
     setSaving(true);
     try {
-      await updateUserProfile(user.uid, { displayName: name });
-      await firebaseAuth().currentUser?.updateProfile({ displayName: name });
+      const patch: Parameters<typeof updateUserProfile>[1] = { displayName: name };
+      if (phoneDigits.length === 10) {
+        patch.phoneNumber = `${country}${phoneDigits}`;
+      }
+      await updateUserProfile(currentUser.uid, patch);
+      if (name !== currentUser.displayName) {
+        await firebaseAuth().currentUser?.updateProfile({ displayName: name });
+      }
       Alert.alert('Saved', 'Your profile was updated.');
     } catch (e: any) {
-      Alert.alert('Save failed', e?.message ?? 'Try again.');
+      setError(e?.message ?? 'Save failed. Try again.');
     } finally {
       setSaving(false);
     }
@@ -86,20 +130,22 @@ export function ProfileScreen({ user, onBack }: Props) {
   function handleSignOut() {
     Alert.alert('Sign out?', 'You can sign back in anytime.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => logout() },
+      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
     ]);
   }
 
   if (loading) {
     return (
       <View style={[styles.flex, styles.center]}>
-        <ActivityIndicator color={colors.primaryDark} />
+        <ActivityIndicator color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <View style={styles.flex}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
           <Text style={styles.back}>‹ Back</Text>
@@ -108,16 +154,17 @@ export function ProfileScreen({ user, onBack }: Props) {
         <View style={{ width: 60 }} />
       </View>
 
-      <View style={styles.body}>
+      <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
         <Pressable
           onPress={pickAndUploadPhoto}
+          disabled={uploading || saving}
           style={({ pressed }) => [styles.avatarWrap, pressed && { opacity: 0.85 }]}>
           {photoURL ? (
             <Image source={{ uri: photoURL }} style={styles.avatarImg} />
           ) : (
             <View style={styles.avatarFallback}>
               <Text style={styles.avatarFallbackText}>
-                {(displayName || user.email || '?').charAt(0).toUpperCase()}
+                {(displayName || currentUser.email || '?').charAt(0).toUpperCase()}
               </Text>
             </View>
           )}
@@ -138,18 +185,48 @@ export function ProfileScreen({ user, onBack }: Props) {
           value={displayName}
           onChangeText={setDisplayName}
           placeholder="Your name"
-          placeholderTextColor="#999"
+          placeholderTextColor={colors.textLight}
+          maxLength={50}
         />
 
         <Text style={styles.fieldLabel}>Email</Text>
         <View style={[styles.input, styles.readonly]}>
-          <Text style={styles.readonlyText}>{user.email}</Text>
+          <Text style={styles.readonlyText}>{currentUser.email}</Text>
         </View>
 
+        <Text style={styles.fieldLabel}>Phone number</Text>
+        <View style={styles.phoneRow}>
+          <TextInput
+            style={[styles.input, styles.codeInput]}
+            value={country}
+            onChangeText={t =>
+              setCountry(t.startsWith('+') ? t : `+${t.replace(/\D/g, '')}`)
+            }
+            keyboardType="phone-pad"
+            maxLength={5}
+          />
+          <TextInput
+            style={[styles.input, styles.phoneInput]}
+            value={phoneDigits}
+            onChangeText={t => setPhoneDigits(t.replace(/\D/g, '').slice(0, 10))}
+            keyboardType="number-pad"
+            placeholder="9876543210"
+            placeholderTextColor={colors.textLight}
+            maxLength={10}
+          />
+        </View>
+        <Text style={styles.hint}>Must be exactly 10 digits.</Text>
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
         <Pressable
-          style={({ pressed }) => [styles.saveBtn, pressed && { opacity: 0.85 }]}
+          style={({ pressed }) => [
+            styles.saveBtn,
+            pressed && { opacity: 0.9 },
+            (saving || uploading) && { opacity: 0.7 },
+          ]}
           onPress={handleSave}
-          disabled={saving}>
+          disabled={saving || uploading}>
           {saving ? (
             <ActivityIndicator color={colors.textOnPrimary} />
           ) : (
@@ -162,8 +239,8 @@ export function ProfileScreen({ user, onBack }: Props) {
           style={({ pressed }) => [styles.signOutBtn, pressed && { opacity: 0.7 }]}>
           <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
-      </View>
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -171,7 +248,7 @@ const AVATAR_SIZE = 120;
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
-  center: { alignItems: 'center', justifyContent: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   header: {
     flexDirection: 'row',
@@ -189,22 +266,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  body: { padding: spacing.xl, alignItems: 'stretch' },
+  body: {
+    padding: spacing.xl,
+    paddingBottom: spacing.xxl + spacing.lg,
+  },
 
-  avatarWrap: { alignSelf: 'center', marginBottom: spacing.xl },
+  avatarWrap: { alignSelf: 'center', marginBottom: spacing.xl, width: AVATAR_SIZE, height: AVATAR_SIZE },
   avatarImg: { width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2 },
   avatarFallback: {
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarFallbackText: { color: colors.headerText, fontSize: 44, fontWeight: '700' },
   avatarOverlay: {
     position: 'absolute',
-    inset: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -245,14 +328,36 @@ const styles = StyleSheet.create({
   readonly: { justifyContent: 'center' },
   readonlyText: { color: colors.textMuted, fontSize: fontSize.md },
 
+  phoneRow: { flexDirection: 'row', gap: spacing.sm },
+  codeInput: {
+    width: 80,
+    textAlign: 'center',
+    fontWeight: '700',
+    paddingHorizontal: spacing.sm,
+  },
+  phoneInput: { flex: 1 },
+
+  hint: {
+    color: colors.textLight,
+    fontSize: fontSize.xs + 1,
+    marginTop: 6,
+  },
+
+  error: {
+    color: colors.error,
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+    marginTop: spacing.md,
+  },
+
   saveBtn: {
     marginTop: spacing.xl,
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.primary,
     borderRadius: radius.md,
     paddingVertical: spacing.md + 2,
     alignItems: 'center',
   },
-  saveBtnText: { color: colors.textOnPrimary, fontWeight: '600', fontSize: fontSize.lg - 1 },
+  saveBtnText: { color: colors.textOnPrimary, fontWeight: '700', fontSize: fontSize.lg - 1 },
 
   signOutBtn: { marginTop: spacing.lg, alignItems: 'center', paddingVertical: spacing.md },
   signOutText: { color: colors.error, fontWeight: '600', fontSize: fontSize.md },

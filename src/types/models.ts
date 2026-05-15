@@ -22,6 +22,11 @@ export interface UserProfile {
   email: string;
   displayName: string;
   photoURL?: string;
+  phoneNumber?: string;
+  /** Last 10 digits of phoneNumber, indexed so the contact-matcher can do
+   *  a single `where('phoneLast10', 'in', [...])` query irrespective of
+   *  how each device formats its address-book entries. */
+  phoneLast10?: string;
   fcmTokens?: string[]; // a user may sign in on multiple devices
   /** Presence: written by presenceService on AppState changes. */
   online?: boolean;
@@ -50,7 +55,7 @@ export interface ChatRoom {
   updatedAt?: Timestamp;
 }
 
-export type MessageType = 'text' | 'image';
+export type MessageType = 'text' | 'image' | 'video';
 
 export interface ChatMessage {
   id: string;
@@ -59,6 +64,9 @@ export interface ChatMessage {
   type: MessageType;
   text?: string;
   imageUrl?: string;
+  videoUrl?: string;
+  /** Optional poster image for video messages (first frame). */
+  videoPosterUrl?: string;
   /** True once the sender soft-deletes the message. */
   deleted?: boolean;
   createdAt?: Timestamp;

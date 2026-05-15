@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Native splash drawable. White bg + centered logo, matching the in-app
+    SplashScreen.tsx so the OS → JS handoff is invisible.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/white" />
+        </shape>
+    </item>
+
+    <item
+        android:gravity="center"
+        android:width="280dp"
+        android:height="280dp">
+        <bitmap
+            android:src="@drawable/splash_logo"
+            android:gravity="center" />
+    </item>
+
+</layer-list>

@@ -85,3 +85,31 @@ export async function uploadChatImage(
   const path = `chatImages/${roomId}/${uid}/${timestampedName(guessExt(fileUri))}`;
   return uploadAndGetUrl(path, fileUri, options);
 }
+
+/**
+ * Upload a chat video. Caller follows with sendMessage({ type: 'video', ... }).
+ * `posterUri`, if provided (typically from react-native-create-thumbnail),
+ * is also uploaded and returned as `posterUrl` for the message preview.
+ */
+export async function uploadChatVideo(
+  roomId: string,
+  uid: string,
+  fileUri: string,
+  options: UploadOptions & { posterUri?: string } = {},
+): Promise<{ videoUrl: string; posterUrl?: string }> {
+  const ext = guessExt(fileUri) || 'mp4';
+  const path = `chatVideos/${roomId}/${uid}/${timestampedName(ext)}`;
+  const videoUrl = await uploadAndGetUrl(path, fileUri, {
+    ...options,
+    contentType: `video/${ext}`,
+  });
+
+  let posterUrl: string | undefined;
+  if (options.posterUri) {
+    const posterPath = `chatVideos/${roomId}/${uid}/${timestampedName('jpg')}.poster`;
+    posterUrl = await uploadAndGetUrl(posterPath, options.posterUri, {
+      contentType: 'image/jpeg',
+    });
+  }
+  return { videoUrl, posterUrl };
+}

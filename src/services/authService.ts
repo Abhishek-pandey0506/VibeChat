@@ -1,8 +1,12 @@
 /**
  * Auth service: thin wrapper around @react-native-firebase/auth.
  *
+ * Google Sign-In is the only supported provider. Email/password and phone
+ * flows were removed at the product's request — if you need to re-introduce
+ * them, look at git history for the previous implementation.
+ *
  * All functions throw FirebaseAuthTypes.NativeFirebaseAuthError on failure;
- * callers should surface `error.code` (e.g. 'auth/invalid-email') to the UI.
+ * callers should surface `error.code` to the UI.
  */
 
 import auth, { type FirebaseAuthTypes } from '@react-native-firebase/auth';
@@ -11,6 +15,7 @@ import {
   statusCodes,
 } from '@react-native-google-signin/google-signin';
 import { firebaseAuth, firebaseFirestore, COLLECTIONS, serverTimestamp } from '../config/firebase';
+import { phoneLast10Of } from './firestoreService';
 import type { UserProfile } from '../types/models';
 
 export type AuthUser = FirebaseAuthTypes.User;
@@ -19,13 +24,14 @@ export type AuthUnsubscribe = () => void;
 /**
  * Configure the Google Sign-In SDK once at app startup.
  *
- * TODO: set GOOGLE_WEB_CLIENT_ID to the **Web client (auto-created)** OAuth
- *       client from the Firebase Console (Project settings → General →
- *       Your apps → Web → Web client ID), NOT the Android client. The web
- *       client id is what Firebase Auth expects in signInWithCredential.
+ * This is the **Web client (auto-created)** OAuth client created by Firebase
+ * when Google Sign-In was enabled. The value is also present inside
+ * `android/app/google-services.json` under `oauth_client` with `client_type: 3`.
+ * It is NOT the Android client — Firebase Auth expects the web one when we
+ * call `signInWithCredential`.
  */
 export const GOOGLE_WEB_CLIENT_ID =
-  '233261392388-REPLACE_WITH_WEB_CLIENT_ID.apps.googleusercontent.com';
+  '233261392388-91oalvnpn4bcmvu6900ld2ln4m3tpml9.apps.googleusercontent.com';
 
 export function configureGoogleSignIn(): void {
   GoogleSignin.configure({
@@ -34,36 +40,10 @@ export function configureGoogleSignIn(): void {
   });
 }
 
-/** Register with email + password and create the matching Firestore profile. */
-export async function registerWithEmail(
-  email: string,
-  password: string,
-  displayName: string,
-): Promise<AuthUser> {
-  const normalizedEmail = email.trim().toLowerCase();
-  const credential = await firebaseAuth().createUserWithEmailAndPassword(
-    normalizedEmail,
-    password,
-  );
-  const user = credential.user;
-
-  await user.updateProfile({ displayName });
-  await upsertUserProfile(user, { displayName, email: normalizedEmail });
-  return user;
-}
-
-export async function loginWithEmail(email: string, password: string): Promise<AuthUser> {
-  const credential = await firebaseAuth().signInWithEmailAndPassword(
-    email.trim().toLowerCase(),
-    password,
-  );
-  return credential.user;
-}
-
 /**
  * Sign in with Google. Returns the Firebase user. Creates / refreshes the
  * matching Firestore profile so subsequent reads (e.g. avatars, displayName)
- * work the same as for email accounts.
+ * work the same as before.
  *
  * Throws with `error.code === 'CANCELED'` if the user closes the picker.
  */
@@ -101,10 +81,6 @@ export async function signInWithGoogle(): Promise<AuthUser> {
   }
 }
 
-export async function sendPasswordReset(email: string): Promise<void> {
-  await firebaseAuth().sendPasswordResetEmail(email);
-}
-
 export async function logout(): Promise<void> {
   // Sign out of Google too so the next session shows the account picker.
   try {
@@ -133,34 +109,49 @@ export function onAuthStateChanged(
 /**
  * Idempotent: creates the `users/{uid}` doc on first sign-in, otherwise
  * just refreshes `updatedAt` and any fields we want to keep in sync.
+ *
+ * IMPORTANT: Firestore rejects writes that contain `undefined` values
+ * with `Unsupported field value: undefined`. Optional fields are only
+ * included in the write when they're actually present.
  */
 async function upsertUserProfile(
   user: AuthUser,
-  fields: { displayName: string; email: string; photoURL?: string },
+  fields: {
+    displayName: string;
+    email: string;
+    photoURL?: string;
+  },
 ): Promise<void> {
   const ref = firebaseFirestore().collection(COLLECTIONS.USERS).doc(user.uid);
   const snap = await ref.get();
 
   if (!snap.exists) {
-    const profile: Omit<UserProfile, 'createdAt' | 'updatedAt'> = {
+    const profile: Record<string, unknown> = {
       uid: user.uid,
       email: fields.email,
       displayName: fields.displayName,
-      photoURL: fields.photoURL,
       fcmTokens: [],
-    };
-    await ref.set({
-      ...profile,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
-    });
+    };
+    if (fields.photoURL) profile.photoURL = fields.photoURL;
+    if (user.phoneNumber) {
+      profile.phoneNumber = user.phoneNumber;
+      const last10 = phoneLast10Of(user.phoneNumber);
+      if (last10) profile.phoneLast10 = last10;
+    }
+    await ref.set(profile);
   } else {
     // Don't overwrite a name the user explicitly edited in-app; only fill
-    // in fields if missing.
+    // in fields if missing on the server.
     const data = snap.data() as Partial<UserProfile> | undefined;
     const patch: Record<string, unknown> = { updatedAt: serverTimestamp() };
-    if (!data?.displayName) patch.displayName = fields.displayName;
-    if (!data?.photoURL && fields.photoURL) patch.photoURL = fields.photoURL;
+    if (!data?.displayName && fields.displayName) {
+      patch.displayName = fields.displayName;
+    }
+    if (!data?.photoURL && fields.photoURL) {
+      patch.photoURL = fields.photoURL;
+    }
     await ref.update(patch);
   }
 }

@@ -1,51 +1,61 @@
 /**
- * VibeChat theme — WhatsApp-inspired green palette.
+ * VibeChat theme — purple/magenta palette pulled from the brand mockups
+ * ("Chat. Connect. Vibe."). Replaces the earlier WhatsApp green skin.
  *
- * Centralised so a future re-skin only touches one file. Screens should
- * import from here instead of hardcoding hex values in StyleSheets.
+ * Screens import from here instead of hardcoding hex values; a future
+ * re-skin only touches this file.
  */
 
 export const colors = {
   // Brand
-  primary: '#25D366',        // WhatsApp light green (FABs, links, accents)
-  primaryDark: '#128C7E',    // Teal-green (active states)
-  headerDark: '#075E54',     // Dark green chat/list header
+  primary: '#7C3AED',         // VibeChat purple (buttons, FAB, links)
+  primaryDeep: '#6D28D9',     // Pressed / dark surface accents
+  primarySoft: '#EDE9FE',     // Tint backgrounds (chips, hover)
+  accent: '#EC4899',          // Magenta accent (gradient highlights, badges)
+
+  headerDark: '#7C3AED',      // Top header bg
   headerText: '#FFFFFF',
-  headerSub: 'rgba(255,255,255,0.75)',
+  headerSub: 'rgba(255,255,255,0.85)',
 
   // Surfaces
   bg: '#FFFFFF',
-  chatBg: '#ECE5DD',         // The famous cream chat backdrop
+  bgSoft: '#F5F3FF',          // App background tint (auth screens, profile)
+  chatBg: '#F5F3FF',          // Chat backdrop
   surface: '#FFFFFF',
-  surfaceMuted: '#F7F7F7',
-  divider: '#E5E5E5',
+  surfaceMuted: '#F4F4F8',
+  divider: '#ECE9F2',
 
   // Bubbles
-  bubbleMine: '#DCF8C6',     // Light green = sent
-  bubbleTheirs: '#FFFFFF',   // White = received
-  bubbleMeta: '#667781',     // Timestamp text under bubble
+  bubbleMine: '#7C3AED',      // Purple = sent
+  bubbleMineText: '#FFFFFF',
+  bubbleTheirs: '#FFFFFF',    // White card = received
+  bubbleTheirsText: '#1F1F2E',
+  bubbleMeta: 'rgba(255,255,255,0.75)',
+  bubbleMetaTheirs: '#8B8FA3',
 
   // Text
-  text: '#111B21',
-  textMuted: '#667781',
+  text: '#1F1F2E',
+  textMuted: '#6B7280',
+  textLight: '#9CA3AF',
   textOnPrimary: '#FFFFFF',
-  link: '#027EB5',
+  link: '#7C3AED',
 
   // Status
-  error: '#E53935',
-  errorBg: '#FDECEA',
-  online: '#25D366',
+  error: '#EF4444',
+  errorBg: '#FEE2E2',
+  success: '#10B981',
+  online: '#22C55E',
 
   // Shadow
-  shadow: 'rgba(0,0,0,0.15)',
+  shadow: 'rgba(76, 29, 149, 0.12)', // tinted toward purple
 };
 
 export const radius = {
-  sm: 6,
-  md: 10,
-  lg: 14,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
   pill: 999,
-  bubble: 8,
 };
 
 export const spacing = {
@@ -54,6 +64,7 @@ export const spacing = {
   md: 12,
   lg: 16,
   xl: 24,
+  xxl: 32,
 };
 
 export const fontSize = {
@@ -63,4 +74,5 @@ export const fontSize = {
   lg: 17,
   xl: 20,
   xxl: 26,
+  display: 32,
 };

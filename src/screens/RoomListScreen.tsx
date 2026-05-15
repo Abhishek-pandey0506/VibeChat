@@ -8,13 +8,12 @@ import {
   Text,
   View,
 } from 'react-native';
-import { type AuthUser } from '../services/authService';
+import { useAuthContext } from '../contexts/AuthContext';
 import { getUserProfile, subscribeUserRooms } from '../services/firestoreService';
 import { colors, fontSize, radius, spacing } from '../theme';
 import type { ChatRoom, UserProfile } from '../types/models';
 
 interface Props {
-  user: AuthUser;
   onOpenRoom: (room: RoomListItem) => void;
   onNewChat: () => void;
   onOpenProfile: () => void;
@@ -28,7 +27,11 @@ export interface RoomListItem extends ChatRoom {
   photoURL?: string;
 }
 
-export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: Props) {
+export function RoomListScreen({ onOpenRoom, onNewChat, onOpenProfile }: Props) {
+  // App.tsx never renders this screen when signed out, so `user` is always
+  // populated here — the non-null assertion below is purely a type narrow.
+  const { user } = useAuthContext();
+  const currentUser = user!;
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -37,7 +40,7 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
 
   useEffect(() => {
     const unsub = subscribeUserRooms(
-      user.uid,
+      currentUser.uid,
       next => {
         setRooms(next);
         setLoading(false);
@@ -48,14 +51,14 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
       },
     );
     return unsub;
-  }, [user.uid]);
+  }, [currentUser.uid]);
 
   // Fetch the "other user" profile for each 1:1 room we don't already have.
   useEffect(() => {
     const otherUids = new Set<string>();
     for (const r of rooms) {
       if (r.isGroup) continue;
-      const other = r.participants.find(p => p !== user.uid);
+      const other = r.participants.find(p => p !== currentUser.uid);
       if (other && !profilesByUid[other]) otherUids.add(other);
     }
     if (otherUids.size === 0) return;
@@ -75,7 +78,7 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
     return () => {
       cancelled = true;
     };
-  }, [rooms, user.uid, profilesByUid]);
+  }, [rooms, currentUser.uid, profilesByUid]);
 
   const items = useMemo<RoomListItem[]>(() => {
     return rooms.map(r => {
@@ -85,14 +88,14 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
       if (r.isGroup) {
         title = r.name || 'Group chat';
       } else {
-        otherUid = r.participants.find(p => p !== user.uid);
+        otherUid = r.participants.find(p => p !== currentUser.uid);
         const other = otherUid ? profilesByUid[otherUid] : undefined;
         title = other?.displayName || other?.email || 'Direct message';
         photoURL = other?.photoURL;
       }
       return { ...r, title, otherUid, photoURL };
     });
-  }, [rooms, profilesByUid, user.uid]);
+  }, [rooms, profilesByUid, currentUser.uid]);
 
   return (
     <View style={styles.container}>
@@ -102,11 +105,11 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
           onPress={onOpenProfile}
           hitSlop={8}
           style={({ pressed }) => [styles.headerAvatar, pressed && { opacity: 0.7 }]}>
-          {user.photoURL ? (
-            <Image source={{ uri: user.photoURL }} style={styles.headerAvatarImg} />
+          {currentUser.photoURL ? (
+            <Image source={{ uri: currentUser.photoURL }} style={styles.headerAvatarImg} />
           ) : (
             <Text style={styles.headerAvatarText}>
-              {(user.displayName || user.email || '?').charAt(0).toUpperCase()}
+              {(currentUser.displayName || currentUser.email || '?').charAt(0).toUpperCase()}
             </Text>
           )}
         </Pressable>
@@ -114,7 +117,7 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator color={colors.primaryDark} />
+          <ActivityIndicator color={colors.primary} />
         </View>
       ) : error ? (
         <View style={styles.center}>
@@ -132,9 +135,9 @@ export function RoomListScreen({ user, onOpenRoom, onNewChat, onOpenProfile }: P
           contentContainerStyle={{ paddingBottom: 96 }}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           renderItem={({ item }) => {
-            const unread = item.unread?.[user.uid] ?? 0;
+            const unread = item.unread?.[currentUser.uid] ?? 0;
             const previewSender =
-              item.lastMessage?.senderId === user.uid ? 'You: ' : '';
+              item.lastMessage?.senderId === currentUser.uid ? 'You: ' : '';
             const preview = item.lastMessage?.text
               ? `${previewSender}${item.lastMessage.text}`
               : 'No messages yet';
@@ -260,7 +263,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: colors.primaryDark,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
