@@ -72,30 +72,6 @@ export interface ChatRoom {
 
 export type MessageType = 'text' | 'image' | 'video' | 'document';
 
-export type CallType = 'voice' | 'video';
-export type CallStatus =
-  | 'ringing'   // caller wrote the doc; callee not yet seen it
-  | 'accepted'  // callee tapped accept; peers exchanging SDP/ICE
-  | 'live'      // both sides have remote stream attached
-  | 'declined'
-  | 'missed'
-  | 'ended';
-
-export interface CallDoc {
-  id: string;
-  callerUid: string;
-  calleeUid: string;
-  type: CallType;
-  status: CallStatus;
-  /** SDP offer from caller. */
-  offer?: { sdp: string; type: string };
-  /** SDP answer from callee. */
-  answer?: { sdp: string; type: string };
-  createdAt?: Timestamp;
-  acceptedAt?: Timestamp;
-  endedAt?: Timestamp;
-}
-
 export interface ChatMessage {
   id: string;
   roomId: string;

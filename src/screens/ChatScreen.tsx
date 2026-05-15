@@ -1,21 +1,23 @@
 /**
- * 1:1 / group conversation screen — matches the second mockup panel.
+ * 1:1 / group conversation screen.
  *
- * Header: white surface, back arrow, small avatar, name + "Active now"
- * presence line, video & phone call buttons on the right.
+ * Header: white surface with back arrow, small avatar, name +
+ * "Active now" presence line, and a chevron to the peer / group
+ * profile. (Voice & video calling were removed.)
  *
  * Body: grey bubbles for incoming, purple bubbles for outgoing. Timestamp
- * sits OUTSIDE the bubble (below it on the same side) so the bubble itself
- * stays clean.
+ * sits OUTSIDE the bubble (below it on the same side) so the bubble
+ * itself stays clean.
  *
- * Input bar: + attachment button on the left, pill-shaped Message input,
- * mic button on the right that morphs into a Send button when text is
- * present.
+ * Input bar: + attachment button on the left (gallery photo only, capped
+ * at 1 MB), pill-shaped Message input, mic icon on the right that morphs
+ * into a Send button when text is present.
  *
- * All the heavy logic is preserved: realtime message subscription,
- * presence subscription, block-relation guard, soft-delete via long-press,
- * image / video / document / camera uploads, video posters, and the
- * voice/video call buttons that route to the WebRTC layer.
+ * Live subscriptions: realtime messages, peer presence, block relation.
+ * Long-press a message for Copy / Delete-for-everyone. Pre-existing
+ * video and document messages still render in the bubble component for
+ * backward compat — only NEW outgoing attachments are restricted to
+ * gallery photos.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -70,7 +72,6 @@ interface Props {
   onBack: () => void;
   onOpenPeerProfile?: (otherUid: string) => void;
   onOpenGroupProfile?: () => void;
-  onStartCall?: (otherUid: string, type: 'voice' | 'video') => void;
 }
 
 type Row =
@@ -84,7 +85,6 @@ export function ChatScreen({
   onBack,
   onOpenPeerProfile,
   onOpenGroupProfile,
-  onStartCall,
 }: Props) {
   const { user } = useAuthContext();
   const currentUser = user!;
@@ -381,30 +381,9 @@ export function ChatScreen({
             </View>
           ) : null}
         </View>
-        {otherUid && onStartCall ? (
-          <View style={styles.headerActions}>
-            <Pressable
-              onPress={e => {
-                e.stopPropagation();
-                onStartCall(otherUid, 'video');
-              }}
-              hitSlop={8}
-              style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}>
-              <Text style={styles.iconText}>📹</Text>
-            </Pressable>
-            <Pressable
-              onPress={e => {
-                e.stopPropagation();
-                onStartCall(otherUid, 'voice');
-              }}
-              hitSlop={8}
-              style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.6 }]}>
-              <Text style={styles.iconText}>📞</Text>
-            </Pressable>
-          </View>
-        ) : (otherUid && onOpenPeerProfile) || (!otherUid && onOpenGroupProfile) ? (
-          <Text style={styles.headerChevron}>›</Text>
-        ) : null}
+        {/* Right slot intentionally empty — the whole header is tappable
+            to open the peer / group profile, so a chevron would be
+            redundant chrome. */}
       </Pressable>
 
       <View style={styles.divider} />
@@ -537,18 +516,21 @@ export function ChatScreen({
             onChangeText={setDraft}
             multiline
           />
-          {/* Mic when no text typed (matches mockup), Send arrow when typing. */}
-          <Pressable
-            onPress={hasDraft ? handleSend : undefined}
-            disabled={sending}
-            hitSlop={6}
-            style={({ pressed }) => [styles.send, pressed && { opacity: 0.85 }]}>
-            {sending ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.sendIcon}>{hasDraft ? '➤' : '🎤'}</Text>
-            )}
-          </Pressable>
+          {/* Send button — only visible once the user has typed
+              something. No mic icon (voice messages aren't supported). */}
+          {hasDraft || sending ? (
+            <Pressable
+              onPress={handleSend}
+              disabled={sending}
+              hitSlop={6}
+              style={({ pressed }) => [styles.send, pressed && { opacity: 0.85 }]}>
+              {sending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.sendIcon}>➤</Text>
+              )}
+            </Pressable>
+          ) : null}
         </View>
       )}
     </KeyboardAvoidingView>
@@ -765,16 +747,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.online,
   },
   headerSub: { color: colors.textMuted, fontSize: fontSize.xs + 1, fontWeight: '500' },
-
-  headerChevron: {
-    color: colors.text3,
-    fontSize: 22,
-    paddingHorizontal: 4,
-    fontWeight: '300',
-  },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  iconBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  iconText: { fontSize: 18 },
 
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.divider },
 

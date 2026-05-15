@@ -112,33 +112,5 @@ service cloud.firestore {
       }
     }
 
-    // ─── Calls (WebRTC signaling) ─────────────────────────────────────
-    // Each `calls/{callId}` doc carries the SDP offer/answer + status.
-    // ICE candidates are stored under offerCandidates / answerCandidates
-    // sub-collections. Only the two participants may read/write.
-    function isCallParty(callData) {
-      return isSignedIn()
-        && (request.auth.uid == callData.callerUid
-            || request.auth.uid == callData.calleeUid);
-    }
-
-    match /calls/{callId} {
-      allow read: if isCallParty(resource.data);
-      allow create: if isSignedIn()
-                    && request.resource.data.callerUid == request.auth.uid
-                    && request.resource.data.callerUid != request.resource.data.calleeUid;
-      allow update: if isCallParty(resource.data)
-                    && request.resource.data.callerUid == resource.data.callerUid
-                    && request.resource.data.calleeUid == resource.data.calleeUid;
-      // Either party may delete a finished call doc.
-      allow delete: if isCallParty(resource.data);
-
-      match /offerCandidates/{candId} {
-        allow read, write: if isCallParty(get(/databases/$(database)/documents/calls/$(callId)).data);
-      }
-      match /answerCandidates/{candId} {
-        allow read, write: if isCallParty(get(/databases/$(database)/documents/calls/$(callId)).data);
-      }
-    }
   }
 }

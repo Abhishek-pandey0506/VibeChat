@@ -23,12 +23,8 @@
     "@react-native-google-signin/google-signin": "^13.1.0",
     "@react-native-clipboard/clipboard": "^1.14.3",
     "react-native-video": "^6.7.0",
-    "react-native-create-thumbnail": "^2.0.0",
     "@react-native-async-storage/async-storage": "^2.1.0",
     "react-native-contacts": "^8.0.5",
-    "@react-native-documents/picker": "^10.0.0",
-    "react-native-webrtc": "^124.0.5",
-    "react-native-incall-manager": "^4.2.0",
     "react-native-linear-gradient": "^2.8.3"
   },
   "devDependencies": {

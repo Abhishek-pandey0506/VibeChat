@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StatusBar, StyleSheet, View, useColorScheme } from 'react-native';
+// (Calls feature removed — no IncomingCall/InCall overlays, no
+// callService imports.)
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider, useAuthContext } from './src/contexts/AuthContext';
 import { configureGoogleSignIn, logout } from './src/services/authService';
@@ -18,10 +20,6 @@ import { ProfileScreen } from './src/screens/ProfileScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 import { UserProfileViewScreen } from './src/screens/UserProfileViewScreen';
 import { GroupProfileScreen } from './src/screens/GroupProfileScreen';
-import { IncomingCallScreen } from './src/screens/IncomingCallScreen';
-import { InCallScreen } from './src/screens/InCallScreen';
-import { startCall, subscribeIncomingCalls, subscribeCall } from './src/services/callService';
-import type { CallDoc, CallType } from './src/types/models';
 import { SplashScreen } from './src/screens/SplashScreen';
 import { CompleteProfileScreen } from './src/screens/CompleteProfileScreen';
 import { AllSetScreen } from './src/screens/AllSetScreen';
@@ -67,13 +65,6 @@ type AppRoute =
 
 const SPLASH_MIN_MS = 3000;
 
-interface ActiveCall {
-  callId: string;
-  side: 'caller' | 'callee';
-  type: CallType;
-  peerUid: string;
-}
-
 function AppContent() {
   const insets = useSafeAreaInsets();
   const { user, initializing } = useAuthContext();
@@ -82,8 +73,6 @@ function AppContent() {
   const [minSplashElapsed, setMinSplashElapsed] = useState(false);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
-  const [incomingCall, setIncomingCall] = useState<CallDoc | null>(null);
-  const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   /** Set to true the moment we leave CompleteProfileScreen — used to show
    *  AllSetScreen exactly once before the user hits the rooms list. */
   const [showAllSet, setShowAllSet] = useState(false);
@@ -123,47 +112,6 @@ function AppContent() {
     });
     return unsub;
   }, [user]);
-
-  // Global incoming-call listener. Surfaces a full-screen ringing UI
-  // regardless of which route is on top.
-  useEffect(() => {
-    if (!user || !profile?.phoneNumber) {
-      setIncomingCall(null);
-      return;
-    }
-    const unsub = subscribeIncomingCalls(user.uid, call => {
-      // Ignore the call we initiated ourselves (some snapshot delay can
-      // bounce our own ringing doc back to us for a beat).
-      if (call && call.callerUid !== user.uid) setIncomingCall(call);
-      else setIncomingCall(null);
-    });
-    return unsub;
-  }, [user, profile?.phoneNumber]);
-
-  // When a call we're in moves to 'accepted' on the doc, the caller side
-  // transitions from outgoing-ringing → in-call. We watch the active call.
-  useEffect(() => {
-    if (!activeCall) return;
-    const unsub = subscribeCall(activeCall.callId, doc => {
-      if (!doc) {
-        setActiveCall(null);
-        return;
-      }
-      if (doc.status === 'declined' || doc.status === 'ended') {
-        setActiveCall(null);
-      }
-    });
-    return unsub;
-  }, [activeCall]);
-
-  function handleStartCall(otherUid: string, type: CallType) {
-    if (!user) return;
-    startCall(user.uid, otherUid, type)
-      .then(callId => {
-        setActiveCall({ callId, side: 'caller', type, peerUid: otherUid });
-      })
-      .catch(err => console.warn('[App] startCall failed', err));
-  }
 
   // Flip showAllSet on once profile becomes complete after the user has
   // been on CompleteProfileScreen this session.
@@ -343,7 +291,6 @@ function AppContent() {
           onOpenGroupProfile={() =>
             setRoute({ name: 'groupProfile', roomId: route.roomId, prev: route })
           }
-          onStartCall={handleStartCall}
         />
       )}
       {route.name === 'userProfile' && (
@@ -358,41 +305,6 @@ function AppContent() {
           onBack={() => setRoute(route.prev)}
           onGroupGone={() => setRoute({ name: 'rooms' })}
         />
-      )}
-
-      {/* Active call surface sits on top of the route stack. It takes the
-          entire screen so the underlying route is hidden while a call is
-          in progress. */}
-      {activeCall && (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          <InCallScreen
-            callId={activeCall.callId}
-            side={activeCall.side}
-            type={activeCall.type}
-            peerUid={activeCall.peerUid}
-            onClosed={() => setActiveCall(null)}
-          />
-        </View>
-      )}
-
-      {/* Incoming-call ringer overlays everything, including an active call
-          (rare, but it'd mask a parallel ring). */}
-      {incomingCall && !activeCall && (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          <IncomingCallScreen
-            call={incomingCall}
-            onAccepted={call => {
-              setIncomingCall(null);
-              setActiveCall({
-                callId: call.id,
-                side: 'callee',
-                type: call.type,
-                peerUid: call.callerUid,
-              });
-            }}
-            onDeclined={() => setIncomingCall(null)}
-          />
-        </View>
       )}
     </View>
   );

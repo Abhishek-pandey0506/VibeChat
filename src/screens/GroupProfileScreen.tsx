@@ -102,8 +102,6 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
   const [savingName, setSavingName] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showAddPicker, setShowAddPicker] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [pinned, setPinned] = useState(false);
 
   useEffect(() => {
     const unsub = subscribeRoom(roomId, next => {
@@ -333,13 +331,6 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
     ]);
   }
 
-  function handleSearchNotice() {
-    Alert.alert(
-      'Search in chat',
-      'Search inside the chat is coming soon. For now use your phone\'s share extension to find a specific message.',
-    );
-  }
-
   if (loading || !room) {
     return (
       <View style={[styles.flex, styles.center]}>
@@ -447,28 +438,17 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
           <Text style={styles.subtitle}>{subtitle}</Text>
         </View>
 
-        {/* Quick actions */}
-        <View style={styles.actionsRow}>
-          <ActionButton
-            icon={muted ? '🔕' : '🔔'}
-            label="Mute"
-            onPress={() => setMuted(m => !m)}
-            active={muted}
-          />
-          <ActionButton icon="🔍" label="Search" onPress={handleSearchNotice} />
-          <ActionButton
-            icon="📌"
-            label="Pin"
-            onPress={() => setPinned(p => !p)}
-            active={pinned}
-          />
-          <ActionButton
-            icon="＋"
-            label="Add"
-            onPress={isAdmin ? () => setShowAddPicker(true) : undefined}
-            disabled={!isAdmin}
-          />
-        </View>
+        {/* Quick actions — only Add remains (admin-only).
+            Mute / Search / Pin were removed per UX request. */}
+        {isAdmin ? (
+          <View style={styles.actionsRow}>
+            <ActionButton
+              icon="＋"
+              label="Add"
+              onPress={() => setShowAddPicker(true)}
+            />
+          </View>
+        ) : null}
 
         {/* Members */}
         <Text style={styles.membersHeader}>

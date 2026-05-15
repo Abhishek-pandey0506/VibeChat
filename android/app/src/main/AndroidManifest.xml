@@ -7,19 +7,6 @@
     <!-- Reading the phone's contact list to find friends already on VibeChat
          and to surface "Invite" entries for the rest. Requested at runtime. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
-    <!-- Voice + video calls (react-native-webrtc + react-native-incall-manager) -->
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-    <uses-feature android:name="android.hardware.audio.output" android:required="false" />
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- Required so the Linking.openURL("sms:…") invite handoff can resolve
          the messaging app on Android 11+ package-visibility-restricted devices. -->
     <queries>

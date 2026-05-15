@@ -26,18 +26,9 @@ import type { UserProfile } from '../types/models';
 interface Props {
   otherUid: string;
   onBack: () => void;
-  onMessage?: () => void;
-  onCall?: () => void;
-  onVideoCall?: () => void;
 }
 
-export function UserProfileViewScreen({
-  otherUid,
-  onBack,
-  onMessage,
-  onCall,
-  onVideoCall,
-}: Props) {
+export function UserProfileViewScreen({ otherUid, onBack }: Props) {
   const { user } = useAuthContext();
   const currentUser = user!;
 
@@ -49,7 +40,6 @@ export function UserProfileViewScreen({
   });
   const [block, setBlock] = useState({ iBlocked: false, theyBlocked: false });
   const [busy, setBusy] = useState(false);
-  const [muted, setMuted] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -143,9 +133,9 @@ export function UserProfileViewScreen({
           <Text style={styles.back}>‹</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Contact</Text>
-        <Pressable hitSlop={10} style={styles.headerBtn}>
-          <Text style={styles.headerIcon}>✎</Text>
-        </Pressable>
+        {/* Right slot kept empty (no edit affordance — viewing someone
+            else's profile is read-only) so the title stays centered. */}
+        <View style={styles.headerBtn} />
       </GradientHeader>
 
       <ScrollView contentContainerStyle={styles.body}>
@@ -172,18 +162,6 @@ export function UserProfileViewScreen({
             <Text style={styles.warnText}>This user has blocked you.</Text>
           </View>
         )}
-
-        <View style={styles.actionsRow}>
-          <ActionButton icon="💬" label="Message" onPress={onMessage} />
-          <ActionButton icon="📞" label="Call" onPress={onCall} />
-          <ActionButton icon="🎥" label="Video" onPress={onVideoCall} />
-          <ActionButton
-            icon={muted ? '🔕' : '🔔'}
-            label="Mute"
-            onPress={() => setMuted(m => !m)}
-            active={muted}
-          />
-        </View>
 
         <View style={styles.infoCard}>
           {profile.phoneNumber ? (
@@ -257,29 +235,6 @@ export function UserProfileViewScreen({
         </Text>
       </ScrollView>
     </View>
-  );
-}
-
-function ActionButton({
-  icon,
-  label,
-  onPress,
-  active,
-}: {
-  icon: string;
-  label: string;
-  onPress?: () => void;
-  active?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.actionBtn, pressed && { opacity: 0.7 }]}>
-      <View style={[styles.actionIconCircle, active && styles.actionIconCircleActive]}>
-        <Text style={styles.actionIcon}>{icon}</Text>
-      </View>
-      <Text style={styles.actionLabel}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -370,26 +325,6 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
   },
   warnText: { color: colors.error, fontSize: fontSize.sm, fontWeight: '600' },
-
-  actionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignSelf: 'stretch',
-    marginTop: spacing.xl,
-    paddingHorizontal: spacing.lg,
-  },
-  actionBtn: { alignItems: 'center', gap: 6, flex: 1 },
-  actionIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primarySoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionIconCircleActive: { backgroundColor: colors.primary },
-  actionIcon: { fontSize: 22 },
-  actionLabel: { color: colors.text2, fontSize: fontSize.xs + 1, fontWeight: '600' },
 
   infoCard: {
     alignSelf: 'stretch',
