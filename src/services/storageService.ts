@@ -55,6 +55,20 @@ async function uploadAndGetUrl(
 }
 
 /**
+ * Upload a new group photo to `groupImages/{roomId}/...`. Returns the
+ * download URL. Caller is responsible for writing it into
+ * `chatRooms/{roomId}.photoURL` (e.g. via updateGroupPhoto).
+ */
+export async function uploadGroupImage(
+  roomId: string,
+  fileUri: string,
+  options: UploadOptions = {},
+): Promise<string> {
+  const path = `groupImages/${roomId}/${timestampedName(guessExt(fileUri))}`;
+  return uploadAndGetUrl(path, fileUri, options);
+}
+
+/**
  * Upload a new profile image, write the URL back to users/{uid}.photoURL,
  * and return the URL for immediate UI use.
  */
@@ -84,6 +98,26 @@ export async function uploadChatImage(
 ): Promise<string> {
   const path = `chatImages/${roomId}/${uid}/${timestampedName(guessExt(fileUri))}`;
   return uploadAndGetUrl(path, fileUri, options);
+}
+
+/**
+ * Upload an arbitrary document (PDF, doc, anything). The MIME type is
+ * preserved on the Storage object so a download / preview client picks the
+ * right viewer.
+ */
+export async function uploadChatDocument(
+  roomId: string,
+  uid: string,
+  fileUri: string,
+  options: UploadOptions & { contentType?: string; filename?: string } = {},
+): Promise<string> {
+  const ext = guessExt(options.filename ?? fileUri) || 'bin';
+  const safeName = (options.filename ?? `${Date.now()}.${ext}`).replace(/[^\w.\-]/g, '_');
+  const path = `chatDocs/${roomId}/${uid}/${Date.now()}-${safeName}`;
+  return uploadAndGetUrl(path, fileUri, {
+    ...options,
+    contentType: options.contentType ?? 'application/octet-stream',
+  });
 }
 
 /**

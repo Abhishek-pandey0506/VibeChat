@@ -28,6 +28,9 @@ export interface UserProfile {
    *  how each device formats its address-book entries. */
   phoneLast10?: string;
   fcmTokens?: string[]; // a user may sign in on multiple devices
+  /** UIDs this user has blocked. They can't send the blocker new messages
+   *  through the client, and the blocker's UI hides their chats. */
+  blockedUsers?: string[];
   /** Presence: written by presenceService on AppState changes. */
   online?: boolean;
   lastSeenAt?: Timestamp;
@@ -44,6 +47,12 @@ export interface ChatRoom {
   participants: string[]; // uids
   isGroup: boolean;
   name?: string; // group name; for 1:1 we compute from the other participant
+  /** Group photo URL (groups only). */
+  photoURL?: string;
+  /** Subset of `participants` who can manage the group (add/remove/rename/delete). */
+  admins?: string[];
+  /** UID who originally created the group — preserved even if they leave. */
+  createdBy?: string;
   lastMessage?: {
     text: string;
     senderId: string;
@@ -55,7 +64,7 @@ export interface ChatRoom {
   updatedAt?: Timestamp;
 }
 
-export type MessageType = 'text' | 'image' | 'video';
+export type MessageType = 'text' | 'image' | 'video' | 'document';
 
 export interface ChatMessage {
   id: string;
@@ -67,6 +76,11 @@ export interface ChatMessage {
   videoUrl?: string;
   /** Optional poster image for video messages (first frame). */
   videoPosterUrl?: string;
+  /** Document attachment metadata. */
+  documentUrl?: string;
+  documentName?: string;
+  documentSize?: number; // bytes
+  documentMime?: string;
   /** True once the sender soft-deletes the message. */
   deleted?: boolean;
   createdAt?: Timestamp;

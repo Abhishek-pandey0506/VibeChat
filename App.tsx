@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { StatusBar, StyleSheet, View, useColorScheme } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthProvider, useAuthContext } from './src/contexts/AuthContext';
-import { configureGoogleSignIn } from './src/services/authService';
+import { configureGoogleSignIn, logout } from './src/services/authService';
 import { subscribeUserProfile } from './src/services/firestoreService';
 import {
   startPresenceTracking,
@@ -14,6 +14,8 @@ import { ChatScreen } from './src/screens/ChatScreen';
 import { NewChatScreen } from './src/screens/NewChatScreen';
 import { CreateGroupScreen } from './src/screens/CreateGroupScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
+import { UserProfileViewScreen } from './src/screens/UserProfileViewScreen';
+import { GroupProfileScreen } from './src/screens/GroupProfileScreen';
 import { SplashScreen } from './src/screens/SplashScreen';
 import { CompleteProfileScreen } from './src/screens/CompleteProfileScreen';
 import { TermsScreen } from './src/screens/TermsScreen';
@@ -49,6 +51,8 @@ type AppRoute =
   | { name: 'newChat' }
   | { name: 'createGroup' }
   | { name: 'profile' }
+  | { name: 'userProfile'; uid: string; prev: AppRoute }
+  | { name: 'groupProfile'; roomId: string; prev: AppRoute }
   | { name: 'chat'; roomId: string; title: string; otherUid?: string };
 
 const SPLASH_MIN_MS = 3000;
@@ -84,6 +88,24 @@ function AppContent() {
     });
     return unsub;
   }, [user]);
+
+  // Recovery: if the Firebase Auth user is still around but the profile
+  // doc has been deleted (typically a half-completed deleteAccount from a
+  // previous session), sign out so the next launch starts cleanly at the
+  // login screen — instead of showing "Complete your profile" with no
+  // backing doc.
+  //
+  // We use a 1.5 s grace period to avoid mistakenly triggering during the
+  // tiny race window between a brand-new Google sign-in and the first
+  // profile snapshot arriving from Firestore.
+  useEffect(() => {
+    if (!user || profileLoading || profile !== null) return;
+    const t = setTimeout(() => {
+      console.warn('[App] orphaned auth user with no profile doc — signing out');
+      void logout();
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [user, profileLoading, profile]);
 
   // Presence lifecycle: only run for users with a completed profile so
   // we don't write presence for someone stuck on the onboarding form.
@@ -136,11 +158,21 @@ function AppContent() {
     return <SplashScreen />;
   }
 
-  // No phone number means this is either a brand-new Google sign-in or an
-  // older account that pre-dates the onboarding form — either way, show it.
-  // Parent bg is the header purple so the area behind the status bar
-  // matches the in-screen header instead of flashing white.
-  if (!profile?.phoneNumber) {
+  // Profile doc doesn't exist at all. Two cases land here:
+  //   • Mid-delete: the Firestore doc was just removed, the auth listener
+  //     will fire null in a moment and route us to LoginScreen.
+  //   • Half-deleted from a previous session: the recovery effect above
+  //     will sign us out shortly.
+  // Either way, do NOT show CompleteProfileScreen — that would flash
+  // briefly before the real navigation lands.
+  if (profile === null) {
+    return <SplashScreen />;
+  }
+
+  // Profile exists but the user hasn't filled in their phone number yet —
+  // brand-new Google sign-in. Parent bg is purple so the status-bar area
+  // matches the in-screen header.
+  if (!profile.phoneNumber) {
     return (
       <View style={[styles.flex, { paddingTop: insets.top, backgroundColor: colors.headerDark }]}>
         <CompleteProfileScreen />
@@ -197,6 +229,25 @@ function AppContent() {
           title={route.title}
           otherUid={route.otherUid}
           onBack={() => setRoute({ name: 'rooms' })}
+          onOpenPeerProfile={uid =>
+            setRoute({ name: 'userProfile', uid, prev: route })
+          }
+          onOpenGroupProfile={() =>
+            setRoute({ name: 'groupProfile', roomId: route.roomId, prev: route })
+          }
+        />
+      )}
+      {route.name === 'userProfile' && (
+        <UserProfileViewScreen
+          otherUid={route.uid}
+          onBack={() => setRoute(route.prev)}
+        />
+      )}
+      {route.name === 'groupProfile' && (
+        <GroupProfileScreen
+          roomId={route.roomId}
+          onBack={() => setRoute(route.prev)}
+          onGroupGone={() => setRoute({ name: 'rooms' })}
         />
       )}
     </View>
@@ -209,7 +260,9 @@ function routeUsesDarkHeader(r: AppRoute): boolean {
     r.name === 'chat' ||
     r.name === 'profile' ||
     r.name === 'newChat' ||
-    r.name === 'createGroup'
+    r.name === 'createGroup' ||
+    r.name === 'userProfile' ||
+    r.name === 'groupProfile'
   );
 }
 

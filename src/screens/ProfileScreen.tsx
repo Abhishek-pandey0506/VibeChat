@@ -15,6 +15,7 @@ import {
 import { launchImageLibrary } from 'react-native-image-picker';
 import { useAuthContext } from '../contexts/AuthContext';
 import { firebaseAuth } from '../config/firebase';
+import { deleteAccount } from '../services/authService';
 import { getUserProfile, updateUserProfile } from '../services/firestoreService';
 import { uploadProfileImage } from '../services/storageService';
 import { colors, fontSize, radius, spacing } from '../theme';
@@ -53,6 +54,7 @@ export function ProfileScreen({ onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -132,6 +134,51 @@ export function ProfileScreen({ onBack }: Props) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
     ]);
+  }
+
+  function handleDeleteAccount() {
+    // Two-step confirmation so this isn't fat-fingered.
+    Alert.alert(
+      'Delete your account?',
+      'This permanently removes your profile and you will lose access to all your chats. Your email will be freed and you can sign up again later.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert(
+              'Are you sure?',
+              'This cannot be undone.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete forever',
+                  style: 'destructive',
+                  onPress: runDelete,
+                },
+              ],
+              { cancelable: true },
+            ),
+        },
+      ],
+      { cancelable: true },
+    );
+  }
+
+  async function runDelete() {
+    setDeleting(true);
+    try {
+      await deleteAccount();
+      // The auth listener in AuthContext will see currentUser go null and
+      // route us back to the Login screen automatically.
+    } catch (e: any) {
+      setDeleting(false);
+      Alert.alert(
+        'Could not delete account',
+        e?.message ?? 'Something went wrong. Please try again.',
+      );
+    }
   }
 
   if (loading) {
@@ -236,9 +283,32 @@ export function ProfileScreen({ onBack }: Props) {
 
         <Pressable
           onPress={handleSignOut}
+          disabled={deleting}
           style={({ pressed }) => [styles.signOutBtn, pressed && { opacity: 0.7 }]}>
           <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
+
+        <View style={styles.dangerZone}>
+          <Text style={styles.dangerLabel}>Danger zone</Text>
+          <Pressable
+            onPress={handleDeleteAccount}
+            disabled={deleting || saving || uploading}
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              pressed && { opacity: 0.85 },
+              deleting && { opacity: 0.6 },
+            ]}>
+            {deleting ? (
+              <ActivityIndicator color={colors.error} />
+            ) : (
+              <Text style={styles.deleteBtnText}>Delete account</Text>
+            )}
+          </Pressable>
+          <Text style={styles.dangerHint}>
+            Removes your profile, photos, and presence. Your messages remain in
+            other people's chats. You can sign up again with the same email later.
+          </Text>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -361,4 +431,36 @@ const styles = StyleSheet.create({
 
   signOutBtn: { marginTop: spacing.lg, alignItems: 'center', paddingVertical: spacing.md },
   signOutText: { color: colors.error, fontWeight: '600', fontSize: fontSize.md },
+
+  dangerZone: {
+    marginTop: spacing.xl,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.errorBg,
+    backgroundColor: '#FFFAFA',
+  },
+  dangerLabel: {
+    fontSize: fontSize.xs + 1,
+    fontWeight: '700',
+    color: colors.error,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: spacing.sm,
+  },
+  deleteBtn: {
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.error,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  deleteBtnText: { color: colors.error, fontWeight: '700', fontSize: fontSize.md + 1 },
+  dangerHint: {
+    color: colors.textMuted,
+    fontSize: fontSize.xs + 1,
+    marginTop: spacing.sm,
+    lineHeight: 17,
+  },
 });

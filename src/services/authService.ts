@@ -14,7 +14,13 @@ import {
   GoogleSignin,
   statusCodes,
 } from '@react-native-google-signin/google-signin';
-import { firebaseAuth, firebaseFirestore, COLLECTIONS, serverTimestamp } from '../config/firebase';
+import {
+  firebaseAuth,
+  firebaseFirestore,
+  firebaseStorage,
+  COLLECTIONS,
+  serverTimestamp,
+} from '../config/firebase';
 import { phoneLast10Of } from './firestoreService';
 import type { UserProfile } from '../types/models';
 
@@ -78,6 +84,96 @@ export async function signInWithGoogle(): Promise<AuthUser> {
       throw err;
     }
     throw e;
+  }
+}
+
+/**
+ * Permanently delete the signed-in user.
+ *
+ * Order is critical to avoid a half-deleted state where the Firestore
+ * profile is gone but the Firebase Auth user is still around (App.tsx
+ * would then route to CompleteProfileScreen with no doc to populate).
+ *
+ *   1. Re-authenticate via Google FIRST. This refreshes the credential
+ *      so `auth.delete()` won't trip "requires-recent-login" later — and
+ *      if the user dismisses the Google sheet, we abort BEFORE wiping
+ *      anything.
+ *   2. Delete Firestore profile doc (rules allow self-delete).
+ *   3. Best-effort delete of profile images.
+ *   4. Delete the Firebase Auth user — fires the auth state listener,
+ *      which routes back to LoginScreen.
+ *   5. Google sign-out so the next launch shows the account picker.
+ */
+export async function deleteAccount(): Promise<void> {
+  const user = firebaseAuth().currentUser;
+  if (!user) throw new Error('No signed-in user to delete.');
+  const uid = user.uid;
+
+  // 1. Refresh Google credential up-front. If this throws (cancelled,
+  //    no Play Services, etc.) we exit without deleting anything.
+  try {
+    await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+    const { data } = await GoogleSignin.signIn();
+    const idToken = data?.idToken;
+    if (!idToken) throw new Error('Could not refresh Google credential.');
+    const credential = auth.GoogleAuthProvider.credential(idToken);
+    await user.reauthenticateWithCredential(credential);
+  } catch (e: any) {
+    if (
+      e?.code === statusCodes.SIGN_IN_CANCELLED ||
+      e?.code === statusCodes.IN_PROGRESS
+    ) {
+      const err = new Error('Account deletion cancelled.');
+      (err as any).code = 'CANCELED';
+      throw err;
+    }
+    throw e;
+  }
+
+  // 2. Delete Firestore profile doc.
+  try {
+    await firebaseFirestore().collection(COLLECTIONS.USERS).doc(uid).delete();
+  } catch (e) {
+    console.warn('[deleteAccount] failed to delete user doc', e);
+  }
+
+  // 3. Best-effort delete of profile images.
+  try {
+    const listing = await firebaseStorage().ref(`profileImages/${uid}`).listAll();
+    await Promise.all(
+      listing.items.map(item =>
+        item.delete().catch(err =>
+          console.warn('[deleteAccount] storage delete failed', item.fullPath, err),
+        ),
+      ),
+    );
+  } catch (e) {
+    console.warn('[deleteAccount] failed to list/delete profile images', e);
+  }
+
+  // 4. Delete Firebase Auth user. With the fresh credential above, this
+  //    shouldn't hit requires-recent-login — but retry once just in case.
+  try {
+    await user.delete();
+  } catch (e: any) {
+    if (e?.code === 'auth/requires-recent-login') {
+      const { data } = await GoogleSignin.signIn();
+      const idToken = data?.idToken;
+      if (!idToken) throw new Error('Could not refresh Google credential.');
+      const credential = auth.GoogleAuthProvider.credential(idToken);
+      await user.reauthenticateWithCredential(credential);
+      await user.delete();
+    } else {
+      throw e;
+    }
+  }
+
+  // 5. Google sign-out. Best-effort.
+  try {
+    const signedIn = await GoogleSignin.getCurrentUser();
+    if (signedIn) await GoogleSignin.signOut();
+  } catch {
+    // ignore
   }
 }
 

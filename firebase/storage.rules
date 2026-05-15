@@ -41,6 +41,20 @@ service firebase.storage {
       allow write: if isSelf(uid) && isImage() && sizeUnder(5 * 1024 * 1024); // 5 MB
     }
 
+    // ─── Group photos ────────────────────────────────────────────────
+    // Any participant of the group can read; only group admins can write.
+    function isGroupAdminOf(roomId) {
+      return isSignedIn()
+        && firestore.exists(/databases/(default)/documents/chatRooms/$(roomId))
+        && request.auth.uid in firestore.get(
+             /databases/(default)/documents/chatRooms/$(roomId)
+           ).data.admins;
+    }
+    match /groupImages/{roomId}/{file=**} {
+      allow read: if isParticipantOfRoom(roomId);
+      allow write: if isGroupAdminOf(roomId) && isImage() && sizeUnder(5 * 1024 * 1024);
+    }
+
     // ─── Chat images ─────────────────────────────────────────────────
     match /chatImages/{roomId}/{uid}/{file=**} {
       allow read: if isParticipantOfRoom(roomId);
@@ -48,6 +62,25 @@ service firebase.storage {
                    && isParticipantOfRoom(roomId)
                    && isImage()
                    && sizeUnder(10 * 1024 * 1024); // 10 MB
+    }
+
+    // ─── Chat videos ─────────────────────────────────────────────────
+    match /chatVideos/{roomId}/{uid}/{file=**} {
+      allow read: if isParticipantOfRoom(roomId);
+      // Allow both video/* and the auto-generated poster JPGs.
+      allow write: if isSelf(uid)
+                   && isParticipantOfRoom(roomId)
+                   && (request.resource.contentType.matches('video/.*')
+                       || request.resource.contentType.matches('image/.*'))
+                   && sizeUnder(20 * 1024 * 1024); // 20 MB
+    }
+
+    // ─── Chat documents (PDFs, etc.) ─────────────────────────────────
+    match /chatDocs/{roomId}/{uid}/{file=**} {
+      allow read: if isParticipantOfRoom(roomId);
+      allow write: if isSelf(uid)
+                   && isParticipantOfRoom(roomId)
+                   && sizeUnder(25 * 1024 * 1024); // 25 MB
     }
 
     // Anything else is denied by default.

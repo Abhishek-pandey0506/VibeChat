@@ -305,11 +305,122 @@ export async function createGroupRoom(
     participants,
     isGroup: true,
     name,
+    admins: [creatorUid],
+    createdBy: creatorUid,
     unread,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
   return ref.id;
+}
+
+/** Single-room realtime listener. Used by GroupProfileScreen. */
+export function subscribeRoom(
+  roomId: string,
+  onChange: (room: ChatRoom | null) => void,
+): () => void {
+  return firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .onSnapshot(snap => {
+      if (!snap.exists) {
+        onChange(null);
+        return;
+      }
+      onChange({ id: snap.id, ...(snap.data() as Omit<ChatRoom, 'id'>) });
+    });
+}
+
+/** Add new members to a group. Caller must already be an admin. */
+export async function addGroupMembers(
+  roomId: string,
+  newMemberUids: string[],
+): Promise<void> {
+  if (newMemberUids.length === 0) return;
+  const ref = firebaseFirestore().collection(COLLECTIONS.CHAT_ROOMS).doc(roomId);
+  const unreadPatch: Record<string, number> = {};
+  for (const uid of newMemberUids) {
+    unreadPatch[`unread.${uid}`] = 0;
+  }
+  await ref.update({
+    participants: arrayUnion(...newMemberUids),
+    ...unreadPatch,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Kick a member out of a group. Caller must be an admin (rules enforce). */
+export async function removeGroupMember(
+  roomId: string,
+  memberUid: string,
+): Promise<void> {
+  const ref = firebaseFirestore().collection(COLLECTIONS.CHAT_ROOMS).doc(roomId);
+  await ref.update({
+    participants: arrayRemove(memberUid),
+    admins: arrayRemove(memberUid),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Promote a member to admin. */
+export async function promoteToAdmin(roomId: string, uid: string): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .update({ admins: arrayUnion(uid), updatedAt: serverTimestamp() });
+}
+
+/** Demote an admin back to a regular member. */
+export async function demoteAdmin(roomId: string, uid: string): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .update({ admins: arrayRemove(uid), updatedAt: serverTimestamp() });
+}
+
+/** Voluntary leave — any participant can remove themselves. */
+export async function leaveGroup(roomId: string, myUid: string): Promise<void> {
+  return removeGroupMember(roomId, myUid);
+}
+
+/** Rename a group. Admin-only. */
+export async function updateGroupName(roomId: string, name: string): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .update({ name: name.trim() || 'Group', updatedAt: serverTimestamp() });
+}
+
+/** Update a group photo URL. Admin-only. */
+export async function updateGroupPhoto(
+  roomId: string,
+  photoURL: string,
+): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .update({ photoURL, updatedAt: serverTimestamp() });
+}
+
+/**
+ * Hard-delete a group room. Admin-only. Best-effort cascades messages
+ * client-side in 100-doc batches; for very large groups deploy a Cloud
+ * Function to fan-out server-side.
+ */
+export async function deleteGroupRoom(roomId: string): Promise<void> {
+  const messagesRef = firebaseFirestore()
+    .collection(COLLECTIONS.CHAT_ROOMS)
+    .doc(roomId)
+    .collection(COLLECTIONS.MESSAGES);
+  while (true) {
+    const snap = await messagesRef.limit(100).get();
+    if (snap.empty) break;
+    const batch = firebaseFirestore().batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    if (snap.size < 100) break;
+  }
+  await firebaseFirestore().collection(COLLECTIONS.CHAT_ROOMS).doc(roomId).delete();
 }
 
 /**
@@ -367,10 +478,26 @@ interface SendMessageInput {
   imageUrl?: string;
   videoUrl?: string;
   videoPosterUrl?: string;
+  documentUrl?: string;
+  documentName?: string;
+  documentSize?: number;
+  documentMime?: string;
 }
 
 export async function sendMessage(input: SendMessageInput): Promise<string> {
-  const { roomId, senderId, type, text, imageUrl, videoUrl, videoPosterUrl } = input;
+  const {
+    roomId,
+    senderId,
+    type,
+    text,
+    imageUrl,
+    videoUrl,
+    videoPosterUrl,
+    documentUrl,
+    documentName,
+    documentSize,
+    documentMime,
+  } = input;
   if (type === 'text' && !text?.trim()) {
     throw new Error('Text message cannot be empty');
   }
@@ -379,6 +506,9 @@ export async function sendMessage(input: SendMessageInput): Promise<string> {
   }
   if (type === 'video' && !videoUrl) {
     throw new Error('Video message must include videoUrl');
+  }
+  if (type === 'document' && !documentUrl) {
+    throw new Error('Document message must include documentUrl');
   }
 
   const batch = firebaseFirestore().batch();
@@ -392,11 +522,21 @@ export async function sendMessage(input: SendMessageInput): Promise<string> {
     imageUrl: imageUrl ?? null,
     videoUrl: videoUrl ?? null,
     videoPosterUrl: videoPosterUrl ?? null,
+    documentUrl: documentUrl ?? null,
+    documentName: documentName ?? null,
+    documentSize: documentSize ?? null,
+    documentMime: documentMime ?? null,
     createdAt: serverTimestamp(),
   });
 
   const previewText =
-    type === 'image' ? '📷 Photo' : type === 'video' ? '🎥 Video' : (text ?? '');
+    type === 'image'
+      ? '📷 Photo'
+      : type === 'video'
+        ? '🎥 Video'
+        : type === 'document'
+          ? `📄 ${documentName ?? 'Document'}`
+          : (text ?? '');
 
   // We also update the room preview here for fast UI; the unread counter is
   // bumped by the Cloud Function so security rules can stay strict.
@@ -464,6 +604,59 @@ export function subscribeUserPresence(
         lastSeenMs: data?.lastSeenAt?.toMillis?.() ?? null,
       });
     });
+}
+
+/**
+ * Block another user. Stored as `blockedUsers: [otherUid, ...]` on the
+ * blocker's profile doc. The chat UI hides composer + bubbles when either
+ * direction of the relationship is blocked.
+ */
+export async function blockUser(myUid: string, otherUid: string): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.USERS)
+    .doc(myUid)
+    .update({ blockedUsers: arrayUnion(otherUid), updatedAt: serverTimestamp() });
+}
+
+export async function unblockUser(myUid: string, otherUid: string): Promise<void> {
+  await firebaseFirestore()
+    .collection(COLLECTIONS.USERS)
+    .doc(myUid)
+    .update({ blockedUsers: arrayRemove(otherUid), updatedAt: serverTimestamp() });
+}
+
+/**
+ * Live "am I blocked by them OR did I block them?" subscription. The chat
+ * screen uses this to decide whether to disable the composer.
+ */
+export function subscribeBlockRelation(
+  myUid: string,
+  otherUid: string,
+  onChange: (state: { iBlocked: boolean; theyBlocked: boolean }) => void,
+): () => void {
+  let mine = false;
+  let theirs = false;
+
+  const unsubA = firebaseFirestore()
+    .collection(COLLECTIONS.USERS)
+    .doc(myUid)
+    .onSnapshot(snap => {
+      const data = snap.data() as Partial<UserProfile> | undefined;
+      mine = !!data?.blockedUsers?.includes(otherUid);
+      onChange({ iBlocked: mine, theyBlocked: theirs });
+    });
+  const unsubB = firebaseFirestore()
+    .collection(COLLECTIONS.USERS)
+    .doc(otherUid)
+    .onSnapshot(snap => {
+      const data = snap.data() as Partial<UserProfile> | undefined;
+      theirs = !!data?.blockedUsers?.includes(myUid);
+      onChange({ iBlocked: mine, theyBlocked: theirs });
+    });
+  return () => {
+    unsubA();
+    unsubB();
+  };
 }
 
 /**

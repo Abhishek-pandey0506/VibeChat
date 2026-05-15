@@ -25,7 +25,8 @@
     "react-native-video": "^6.7.0",
     "react-native-create-thumbnail": "^2.0.0",
     "@react-native-async-storage/async-storage": "^2.1.0",
-    "react-native-contacts": "^8.0.5"
+    "react-native-contacts": "^8.0.5",
+    "@react-native-documents/picker": "^10.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

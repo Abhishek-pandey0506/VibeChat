@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+/**
+ * New Group creation screen.
+ *
+ * Candidate sourcing — we DO NOT dump the whole user directory. Members
+ * come from places the user actually knows:
+ *   1. Device contacts that are also on VibeChat (matched via email /
+ *      phoneLast10).
+ *   2. People the user has chatted with before (pulled from their rooms).
+ *   3. Any name/phone/email the user types into the search box — falls back
+ *      to a Firestore lookup so they can grab someone not in those lists.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -13,9 +25,20 @@ import {
   View,
 } from 'react-native';
 import { useAuthContext } from '../contexts/AuthContext';
-import { createGroupRoom, listUsers } from '../services/firestoreService';
+import {
+  createGroupRoom,
+  findUsersForContacts,
+  getUserProfile,
+  searchVibeChatUsers,
+  subscribeUserRooms,
+} from '../services/firestoreService';
+import {
+  getDeviceContacts,
+  hasContactsPermission,
+  requestContactsPermission,
+} from '../services/contactsService';
 import { colors, fontSize, radius, spacing } from '../theme';
-import type { UserProfile } from '../types/models';
+import type { ChatRoom, UserProfile } from '../types/models';
 
 interface Props {
   onBack: () => void;
@@ -26,45 +49,139 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
   const { user } = useAuthContext();
   const currentUser = user!;
 
-  const [users, setUsers] = useState<UserProfile[]>([]);
+  // Candidate pool: union of contact matches + chat partners.
+  const [candidates, setCandidates] = useState<Record<string, UserProfile>>({});
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [groupName, setGroupName] = useState('');
-  const [loadingUsers, setLoadingUsers] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const list = await listUsers(currentUser.uid);
-        if (!cancelled) setUsers(list);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message ?? 'Failed to load users.');
-      } finally {
-        if (!cancelled) setLoadingUsers(false);
+  // Direct Firestore search for users not in candidates.
+  const [directHits, setDirectHits] = useState<UserProfile[]>([]);
+  const [searchingDirect, setSearchingDirect] = useState(false);
+
+  // ─── Load candidates: contacts + chat partners ──────────────────────
+  const loadCandidates = useCallback(async () => {
+    setLoading(true);
+    const pool: Record<string, UserProfile> = {};
+    try {
+      // 1. Device contacts → VibeChat matches.
+      let granted = await hasContactsPermission();
+      if (!granted) granted = await requestContactsPermission();
+      if (granted) {
+        try {
+          const contacts = await getDeviceContacts();
+          const emails = contacts.flatMap(c => c.emails);
+          const phones = contacts.flatMap(c => c.phoneLast10s);
+          if (emails.length || phones.length) {
+            const matchMap = await findUsersForContacts(emails, phones);
+            for (const profile of matchMap.values()) {
+              if (profile.uid !== currentUser.uid) pool[profile.uid] = profile;
+            }
+          }
+        } catch (e) {
+          console.warn('[CreateGroup] contacts load failed', e);
+        }
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    } catch (e) {
+      console.warn('[CreateGroup] permission flow failed', e);
+    }
+
+    setCandidates(prev => ({ ...prev, ...pool }));
+    setLoading(false);
   }, [currentUser.uid]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(
-      u =>
-        u.displayName?.toLowerCase().includes(q) ||
-        u.email?.toLowerCase().includes(q),
-    );
-  }, [users, search]);
+  // 2. Chat partners — subscribe to rooms once, fan-out fetch profiles
+  //    for everyone the user has chatted with.
+  useEffect(() => {
+    const unsub = subscribeUserRooms(currentUser.uid, async (rooms: ChatRoom[]) => {
+      const otherUids = new Set<string>();
+      for (const r of rooms) {
+        for (const p of r.participants) {
+          if (p !== currentUser.uid) otherUids.add(p);
+        }
+      }
+      // Fetch missing profiles.
+      const missing = [...otherUids].filter(uid => !candidates[uid]);
+      if (missing.length === 0) return;
+      const fetched: Record<string, UserProfile> = {};
+      await Promise.all(
+        missing.map(async uid => {
+          const p = await getUserProfile(uid);
+          if (p) fetched[uid] = p;
+        }),
+      );
+      if (Object.keys(fetched).length) {
+        setCandidates(prev => ({ ...prev, ...fetched }));
+      }
+    });
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser.uid]);
 
-  const selectedUsers = useMemo(
-    () => users.filter(u => selected.has(u.uid)),
-    [users, selected],
-  );
+  useEffect(() => {
+    loadCandidates();
+  }, [loadCandidates]);
+
+  // 3. Direct Firestore search whenever the query changes (debounced).
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) {
+      setDirectHits([]);
+      return;
+    }
+    let cancelled = false;
+    setSearchingDirect(true);
+    const t = setTimeout(async () => {
+      try {
+        const found = await searchVibeChatUsers(q, currentUser.uid);
+        if (!cancelled) setDirectHits(found);
+      } catch (e: any) {
+        if (!cancelled) console.warn('[CreateGroup] direct search failed', e);
+      } finally {
+        if (!cancelled) setSearchingDirect(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [search, currentUser.uid]);
+
+  // ─── Filter / display logic ─────────────────────────────────────────
+  const filteredCandidates = useMemo<UserProfile[]>(() => {
+    const list = Object.values(candidates);
+    const q = search.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
+    if (!q) {
+      return list.sort((a, b) =>
+        (a.displayName ?? a.email ?? '').localeCompare(b.displayName ?? b.email ?? ''),
+      );
+    }
+    return list.filter(u => {
+      if ((u.displayName ?? '').toLowerCase().includes(q)) return true;
+      if ((u.email ?? '').toLowerCase().includes(q)) return true;
+      if (qDigits) {
+        const phoneDigits = (u.phoneNumber ?? '').replace(/\D/g, '');
+        if (phoneDigits.includes(qDigits)) return true;
+      }
+      return false;
+    });
+  }, [candidates, search]);
+
+  // Dedupe direct hits against the candidate filter.
+  const directOnly = useMemo<UserProfile[]>(() => {
+    const seen = new Set(filteredCandidates.map(u => u.uid));
+    return directHits.filter(u => !seen.has(u.uid));
+  }, [directHits, filteredCandidates]);
+
+  const selectedUsers = useMemo<UserProfile[]>(() => {
+    const all = { ...candidates };
+    for (const u of directHits) all[u.uid] = u;
+    return [...selected].map(uid => all[uid]).filter(Boolean);
+  }, [candidates, directHits, selected]);
 
   function toggle(uid: string) {
     setSelected(prev => {
@@ -147,7 +264,7 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
           style={styles.searchInput}
           value={search}
           onChangeText={setSearch}
-          placeholder="Search users by name or email"
+          placeholder="Search by name, phone, or email"
           placeholderTextColor={colors.textLight}
           autoCapitalize="none"
         />
@@ -158,8 +275,7 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
         )}
       </View>
 
-      {/* Selected chips row — bounded height so the chips render correctly
-          inside the flex parent. ScrollView keeps a single line. */}
+      {/* Selected chips */}
       {selectedUsers.length > 0 && (
         <View style={styles.chipsBar}>
           <ScrollView
@@ -186,73 +302,110 @@ export function CreateGroupScreen({ onBack, onGroupReady }: Props) {
         </View>
       )}
 
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Add members</Text>
-      </View>
-
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      {loadingUsers ? (
+      {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
         <FlatList
-          data={filtered}
+          data={filteredCandidates}
           keyExtractor={u => u.uid}
           ItemSeparatorComponent={() => <View style={styles.sep} />}
           contentContainerStyle={{ paddingBottom: spacing.xxl + spacing.lg }}
-          renderItem={({ item }) => {
-            const isSelected = selected.has(item.uid);
-            return (
-              <Pressable
-                onPress={() => toggle(item.uid)}
-                style={({ pressed }) => [
-                  styles.row,
-                  isSelected && styles.rowSelected,
-                  pressed && { opacity: 0.9 },
-                ]}>
-                {item.photoURL ? (
-                  <Image source={{ uri: item.photoURL }} style={styles.avatarImg} />
-                ) : (
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>
-                      {(item.displayName || item.email || '?').charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.rowTitle} numberOfLines={1}>
-                    {item.displayName || item.email}
-                  </Text>
-                  {item.email ? (
-                    <Text style={styles.rowSub} numberOfLines={1}>
-                      {item.email}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-                  {isSelected && <Text style={styles.checkboxTick}>✓</Text>}
-                </View>
-              </Pressable>
-            );
-          }}
+          ListHeaderComponent={
+            filteredCandidates.length > 0 ? (
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>
+                  {search ? 'From your contacts and chats' : 'Add members'}
+                </Text>
+              </View>
+            ) : null
+          }
+          renderItem={({ item }) => renderRow(item)}
           ListEmptyComponent={
             <View style={styles.center}>
-              <Text style={styles.emptyTitle}>No users found</Text>
-              <Text style={styles.emptyBody}>Try a different search term.</Text>
+              {search ? (
+                searchingDirect ? (
+                  <>
+                    <ActivityIndicator color={colors.primary} />
+                    <Text style={[styles.emptyBody, { marginTop: spacing.sm }]}>
+                      Searching VibeChat…
+                    </Text>
+                  </>
+                ) : null
+              ) : (
+                <>
+                  <Text style={styles.emptyTitle}>Nobody to add yet</Text>
+                  <Text style={styles.emptyBody}>
+                    Once you have contacts on VibeChat or have chatted with someone,
+                    they'll appear here.
+                  </Text>
+                </>
+              )}
             </View>
+          }
+          ListFooterComponent={
+            search && directOnly.length > 0 ? (
+              <View>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Other VibeChat users</Text>
+                </View>
+                {directOnly.map(u => (
+                  <View key={u.uid}>
+                    {renderRow(u)}
+                    <View style={styles.sep} />
+                  </View>
+                ))}
+              </View>
+            ) : null
           }
         />
       )}
     </KeyboardAvoidingView>
   );
+
+  function renderRow(item: UserProfile) {
+    const isSelected = selected.has(item.uid);
+    return (
+      <Pressable
+        onPress={() => toggle(item.uid)}
+        style={({ pressed }) => [
+          styles.row,
+          isSelected && styles.rowSelected,
+          pressed && { opacity: 0.9 },
+        ]}>
+        {item.photoURL ? (
+          <Image source={{ uri: item.photoURL }} style={styles.avatarImg} />
+        ) : (
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {(item.displayName || item.email || '?').charAt(0).toUpperCase()}
+            </Text>
+          </View>
+        )}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {item.displayName || item.email}
+          </Text>
+          {item.email ? (
+            <Text style={styles.rowSub} numberOfLines={1}>
+              {item.email}
+            </Text>
+          ) : null}
+        </View>
+        <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+          {isSelected && <Text style={styles.checkboxTick}>✓</Text>}
+        </View>
+      </Pressable>
+    );
+  }
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
 
-  // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -271,7 +424,6 @@ const styles = StyleSheet.create({
   headerAction: { paddingHorizontal: spacing.md, minWidth: 60, alignItems: 'flex-end' },
   headerActionText: { color: colors.headerText, fontWeight: '700', fontSize: fontSize.md },
 
-  // Top row: avatar + name + counter
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -303,7 +455,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
-  // Search bar
   searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -323,11 +474,7 @@ const styles = StyleSheet.create({
   },
   clearIcon: { fontSize: 14, color: colors.textMuted, paddingHorizontal: 4 },
 
-  // Selected-chips bar
-  chipsBar: {
-    height: 50,
-    marginTop: spacing.md,
-  },
+  chipsBar: { height: 50, marginTop: spacing.md },
   chipsRow: {
     paddingHorizontal: spacing.lg,
     alignItems: 'center',
@@ -360,7 +507,6 @@ const styles = StyleSheet.create({
   },
   chipX: { color: colors.primary, fontSize: 12, fontWeight: '700' },
 
-  // Section header
   sectionHeader: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
@@ -383,8 +529,19 @@ const styles = StyleSheet.create({
   },
 
   center: { padding: spacing.xxl, alignItems: 'center' },
-  emptyTitle: { color: colors.text, fontWeight: '700', fontSize: fontSize.md + 1, marginBottom: spacing.xs },
-  emptyBody: { color: colors.textMuted, fontSize: fontSize.sm + 1, textAlign: 'center' },
+  emptyTitle: {
+    color: colors.text,
+    fontWeight: '700',
+    fontSize: fontSize.md + 1,
+    marginBottom: spacing.xs,
+  },
+  emptyBody: {
+    color: colors.textMuted,
+    fontSize: fontSize.sm + 1,
+    textAlign: 'center',
+    lineHeight: 20,
+    paddingHorizontal: spacing.lg,
+  },
 
   row: {
     flexDirection: 'row',
