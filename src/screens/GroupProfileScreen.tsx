@@ -357,7 +357,7 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
 
       <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10} style={styles.headerBtn}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Group</Text>
         <Pressable
@@ -438,25 +438,28 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
           <Text style={styles.subtitle}>{subtitle}</Text>
         </View>
 
-        {/* Quick actions — only Add remains (admin-only).
-            Mute / Search / Pin were removed per UX request. */}
-        {isAdmin ? (
-          <View style={styles.actionsRow}>
-            <ActionButton
-              icon="＋"
-              label="Add"
+        {/* Members header — section label on the left, "+ Add member"
+            chip on the right (admin-only). */}
+        <View style={styles.membersHeaderRow}>
+          <Text style={styles.membersHeader}>
+            {room.participants.length}{' '}
+            {room.participants.length === 1 ? 'MEMBER' : 'MEMBERS'}
+          </Text>
+          {isAdmin ? (
+            <Pressable
               onPress={() => setShowAddPicker(true)}
-            />
-          </View>
-        ) : null}
+              style={({ pressed }) => [
+                styles.addMemberBtn,
+                pressed && { opacity: 0.85 },
+              ]}>
+              <Text style={styles.addMemberPlus}>＋</Text>
+              <Text style={styles.addMemberLabel}>Add member</Text>
+            </Pressable>
+          ) : null}
+        </View>
 
-        {/* Members */}
-        <Text style={styles.membersHeader}>
-          {room.participants.length}{' '}
-          {room.participants.length === 1 ? 'MEMBER' : 'MEMBERS'}
-        </Text>
-
-        {room.participants.map(uid => {
+        <View style={styles.membersCard}>
+        {room.participants.map((uid, idx) => {
           const profile = memberProfiles[uid];
           const isYou = uid === myUid;
           const isUserAdmin = !!room.admins?.includes(uid);
@@ -471,6 +474,7 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
               memberPresenceLine(presence?.online, presence?.lastSeenMs) ??
               (createdAt ? `Joined ${formatCreated(createdAt)}` : '');
           }
+          const isLast = idx === room.participants.length - 1;
           return (
             <Pressable
               key={uid}
@@ -478,6 +482,7 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
               disabled={isYou || !isAdmin}
               style={({ pressed }) => [
                 styles.memberRow,
+                !isLast && styles.memberRowDivider,
                 pressed && isAdmin && !isYou && { backgroundColor: colors.surfaceMuted },
               ]}>
               {profile?.photoURL ? (
@@ -511,6 +516,7 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
             </Pressable>
           );
         })}
+        </View>
 
         <View style={styles.actionsSpacer} />
 
@@ -520,19 +526,17 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
           <Text style={styles.leaveBtnText}>⤴  Leave group</Text>
         </Pressable>
 
+        {/* Danger action — plain red button, no surrounding card or
+            warning copy. Admin-only. */}
         {isAdmin && (
-          <View style={styles.dangerZone}>
-            <Text style={styles.dangerLabel}>Danger zone</Text>
-            <Pressable
-              onPress={handleDeleteGroup}
-              style={({ pressed }) => [styles.deleteBtn, pressed && { opacity: 0.85 }]}>
-              <Text style={styles.deleteBtnText}>Delete group for everyone</Text>
-            </Pressable>
-            <Text style={styles.dangerHint}>
-              Removes the group and every message inside it for all members.
-              Cannot be undone.
-            </Text>
-          </View>
+          <Pressable
+            onPress={handleDeleteGroup}
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              pressed && { opacity: 0.85 },
+            ]}>
+            <Text style={styles.deleteBtnText}>Delete group for everyone</Text>
+          </Pressable>
         )}
       </ScrollView>
 
@@ -544,42 +548,6 @@ export function GroupProfileScreen({ roomId, onBack, onGroupGone }: Props) {
         />
       )}
     </KeyboardAvoidingView>
-  );
-}
-
-function ActionButton({
-  icon,
-  label,
-  onPress,
-  active,
-  disabled,
-}: {
-  icon: string;
-  label: string;
-  onPress?: () => void;
-  active?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [
-        styles.actionBtn,
-        pressed && !disabled && { opacity: 0.7 },
-        disabled && { opacity: 0.4 },
-      ]}>
-      <View style={[styles.actionIconCircle, active && styles.actionIconCircleActive]}>
-        <Text
-          style={[
-            styles.actionIcon,
-            active && { color: '#fff' },
-          ]}>
-          {icon}
-        </Text>
-      </View>
-      <Text style={styles.actionLabel}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -852,15 +820,27 @@ const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
+  // Header has three balanced slots: back-button area on the left, the
+  // centered title, and the edit-pencil area on the right. Both side
+  // slots are identical 44×44 squares (the recommended Android/iOS
+  // touch-target size) so the title is mathematically centered between
+  // them.
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md + 2,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm + 2,
   },
-  headerBtn: { width: 36, alignItems: 'center' },
-  back: { color: colors.headerText, fontSize: 32, lineHeight: 32, fontWeight: '500' },
-  headerIcon: { color: colors.headerText, fontSize: 18 },
+  headerBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Tuned so the back arrow and pencil read at similar visual weight —
+  // the previous 32-vs-18 mismatch made the right side feel airy.
+  back: { color: colors.headerText, fontSize: 24, fontWeight: '600' },
+  headerIcon: { color: colors.headerText, fontSize: 20, fontWeight: '600' },
   headerTitle: {
     flex: 1,
     textAlign: 'center',
@@ -929,44 +909,71 @@ const styles = StyleSheet.create({
   renameCancel: { paddingHorizontal: spacing.sm, paddingVertical: 8 },
   renameCancelText: { color: colors.textMuted, fontWeight: '600' },
 
-  actionsRow: {
+  // Compact chip pinned to the right of the "N MEMBERS" header.
+  addMemberBtn: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignSelf: 'stretch',
-    marginTop: spacing.xl,
-    paddingHorizontal: spacing.lg,
-  },
-  actionBtn: { alignItems: 'center', gap: 6, flex: 1 },
-  actionIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primarySoft,
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primarySoft,
   },
-  actionIconCircleActive: { backgroundColor: colors.primary },
-  actionIcon: { fontSize: 22 },
-  actionLabel: { color: colors.text2, fontSize: fontSize.xs + 1, fontWeight: '600' },
+  addMemberPlus: {
+    color: colors.primary,
+    fontSize: fontSize.md + 1,
+    fontWeight: '800',
+    lineHeight: fontSize.md + 1,
+  },
+  addMemberLabel: {
+    color: colors.primary,
+    fontSize: fontSize.sm + 1,
+    fontWeight: '700',
+  },
 
-  membersHeader: {
-    alignSelf: 'flex-start',
+  // ── Members section ──────────────────────────────────────────────
+  // The header is a row so we can sit the "+ Add member" chip on the
+  // right edge, aligned with the caps section title.
+  membersHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    alignSelf: 'stretch',
     paddingHorizontal: spacing.lg,
     marginTop: spacing.xl,
     marginBottom: spacing.sm,
+  },
+  membersHeader: {
     color: colors.textMuted,
     fontSize: fontSize.xs + 1,
     fontWeight: '700',
     letterSpacing: 0.8,
   },
 
+  // Wraps every member row in a single rounded card so the list feels
+  // grouped instead of floating on the body background.
+  membersCard: {
+    alignSelf: 'stretch',
+    marginHorizontal: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    overflow: 'hidden',
+  },
+
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'stretch',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.md + 2,
     paddingVertical: spacing.md,
     gap: spacing.md,
+  },
+  // Hairline divider between rows inside the members card. The last
+  // row doesn't get one so the card bottom looks clean.
+  memberRowDivider: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.divider,
   },
   memberAvatar: { width: 44, height: 44, borderRadius: 22 },
   memberAvatarFallback: {
@@ -1001,37 +1008,18 @@ const styles = StyleSheet.create({
   },
   leaveBtnText: { color: colors.error, fontWeight: '700', fontSize: fontSize.md + 1 },
 
-  dangerZone: {
-    alignSelf: 'stretch',
-    marginTop: spacing.xl,
-    marginHorizontal: spacing.lg,
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.errorBg,
-    backgroundColor: '#FFFAFA',
-  },
-  dangerLabel: {
-    fontSize: fontSize.xs + 1,
-    fontWeight: '700',
-    color: colors.error,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: spacing.sm,
-  },
+  // Delete-group button — standalone red pill, sits below "Leave group"
+  // with the same gutter, no surrounding card or warning copy.
   deleteBtn: {
-    paddingVertical: spacing.md,
+    alignSelf: 'stretch',
+    marginTop: spacing.md,
+    marginHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
     borderRadius: radius.md,
     backgroundColor: colors.error,
     alignItems: 'center',
   },
   deleteBtnText: { color: '#fff', fontWeight: '700', fontSize: fontSize.md + 1 },
-  dangerHint: {
-    color: colors.textMuted,
-    fontSize: fontSize.xs + 1,
-    marginTop: spacing.sm,
-    lineHeight: 17,
-  },
 });
 
 const pickerStyles = StyleSheet.create({

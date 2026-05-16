@@ -130,7 +130,7 @@ export function UserProfileViewScreen({ otherUid, onBack }: Props) {
     <View style={styles.flex}>
       <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10} style={styles.headerBtn}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Contact</Text>
         {/* Right slot kept empty (no edit affordance — viewing someone

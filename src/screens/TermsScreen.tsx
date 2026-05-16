@@ -59,7 +59,7 @@ export function TermsScreen({ onBack }: Props) {
       />
       <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Terms of service</Text>
         <View style={{ width: 28 }} />

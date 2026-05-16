@@ -1,7 +1,7 @@
 /**
  * New Message screen — matches the third mockup panel.
  *
- * Header: ‹ back + "New message" title, white surface.
+ * Header: ← back + "New message" title, white surface.
  * Search row.
  * Two big action cards: "New group" and "New contact".
  * Section header "ON VIBECHAT · N CONTACTS" then matched users.
@@ -301,7 +301,7 @@ export function NewChatScreen({ onBack, onRoomReady, onCreateGroup }: Props) {
           onPress={onBack}
           hitSlop={10}
           style={({ pressed }) => pressed && { opacity: 0.6 }}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         <Text style={styles.headerTitle}>New message</Text>
         <View style={{ width: 28 }} />

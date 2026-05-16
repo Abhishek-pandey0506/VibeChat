@@ -547,16 +547,12 @@ export async function sendMessage(input: SendMessageInput): Promise<string> {
 
   // We also update the room preview here for fast UI; the unread counter is
   // bumped by the Cloud Function so security rules can stay strict.
-  // Clearing hiddenBy means a chat that any participant deleted with
-  // "Delete chat" pops back into their list as soon as new activity
-  // happens — same semantics WhatsApp / Instagram use.
   batch.update(roomRef, {
     lastMessage: {
       text: previewText,
       senderId,
       createdAt: serverTimestamp(),
     },
-    hiddenBy: [],
     updatedAt: serverTimestamp(),
   });
 
@@ -636,21 +632,6 @@ export async function unblockUser(myUid: string, otherUid: string): Promise<void
     .update({ blockedUsers: arrayRemove(otherUid), updatedAt: serverTimestamp() });
 }
 
-/**
- * "Delete chat for me" — hides the room from the caller's list without
- * touching the room for the other participant(s). The room reappears
- * automatically the next time anyone in the room sends a message
- * (sendMessage clears `hiddenBy`).
- */
-export async function hideRoomForUser(
-  roomId: string,
-  uid: string,
-): Promise<void> {
-  await firebaseFirestore()
-    .collection(COLLECTIONS.CHAT_ROOMS)
-    .doc(roomId)
-    .update({ hiddenBy: arrayUnion(uid), updatedAt: serverTimestamp() });
-}
 
 /**
  * Live "am I blocked by them OR did I block them?" subscription. The chat

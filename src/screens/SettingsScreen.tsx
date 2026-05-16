@@ -78,7 +78,7 @@ export function SettingsScreen({ onBack, onOpenProfile, onOpenTerms, onOpenPriva
     <View style={styles.flex}>
       <View style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10} style={styles.headerBtn}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Settings</Text>
         <View style={styles.headerBtn} />

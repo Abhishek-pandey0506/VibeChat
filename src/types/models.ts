@@ -60,12 +60,6 @@ export interface ChatRoom {
   };
   /** Per-user unread counters maintained by Cloud Function. */
   unread?: Record<string, number>;
-  /**
-   * UIDs that hid this room via "Delete chat". Filtered client-side in
-   * the rooms list. Cleared whenever a new message lands so the chat
-   * pops back into view for everyone.
-   */
-  hiddenBy?: string[];
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 }

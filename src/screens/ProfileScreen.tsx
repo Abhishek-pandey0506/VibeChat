@@ -186,7 +186,7 @@ export function ProfileScreen({ onBack }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <GradientHeader style={styles.header}>
         <Pressable onPress={onBack} hitSlop={10} style={styles.headerBtn}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Profile</Text>
         <Pressable

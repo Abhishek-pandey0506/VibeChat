@@ -46,7 +46,6 @@ import Video from 'react-native-video';
 import { useAuthContext } from '../contexts/AuthContext';
 import {
   getUserProfile,
-  hideRoomForUser,
   markRoomRead,
   sendMessage,
   softDeleteMessage,
@@ -247,31 +246,6 @@ export function ChatScreen({
     }
   }
 
-  function handleDeleteChat() {
-    Alert.alert(
-      'Delete this chat?',
-      'It will be removed from your list. Messages will still exist for the other person. The chat will reappear if they send a new message.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await hideRoomForUser(roomId, currentUser.uid);
-            } catch (e: any) {
-              // Even if the hide fails (rules / network), still leave the
-              // screen — the user clearly wants out. They can re-trigger
-              // the action from the list later if needed.
-              console.warn('[ChatScreen] hideRoomForUser failed', e);
-            } finally {
-              onBack();
-            }
-          },
-        },
-      ],
-    );
-  }
 
   function handleLongPressMessage(msg: ChatMessage) {
     if (msg.deleted) return;
@@ -357,7 +331,7 @@ export function ChatScreen({
           onPress={onBack}
           hitSlop={10}
           style={({ pressed }) => pressed && { opacity: 0.6 }}>
-          <Text style={styles.back}>‹</Text>
+          <Text style={styles.back}>←</Text>
         </Pressable>
         {peer?.photoURL ? (
           <Image source={{ uri: peer.photoURL }} style={styles.avatarSm} />
@@ -467,32 +441,21 @@ export function ChatScreen({
             )}
           </Text>
           {block.iBlocked ? (
-            <View style={styles.blockActions}>
-              <Pressable
-                onPress={handleDeleteChat}
-                hitSlop={6}
-                style={({ pressed }) => [
-                  styles.blockBtn,
-                  pressed && { opacity: 0.7 },
-                ]}>
-                <Text style={styles.blockBtnDanger}>Delete chat</Text>
-              </Pressable>
-              <View style={styles.blockSep} />
-              <Pressable
-                onPress={handleUnblock}
-                disabled={unblocking}
-                hitSlop={6}
-                style={({ pressed }) => [
-                  styles.blockBtn,
-                  pressed && { opacity: 0.7 },
-                ]}>
-                {unblocking ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.blockBtnPrimary}>Unblock</Text>
-                )}
-              </Pressable>
-            </View>
+            <Pressable
+              onPress={handleUnblock}
+              disabled={unblocking}
+              hitSlop={6}
+              style={({ pressed }) => [
+                styles.unblockBtn,
+                pressed && { opacity: 0.85 },
+                unblocking && { opacity: 0.7 },
+              ]}>
+              {unblocking ? (
+                <ActivityIndicator color={colors.error} />
+              ) : (
+                <Text style={styles.unblockBtnText}>Unblock</Text>
+              )}
+            </Pressable>
           ) : null}
         </View>
       ) : (
@@ -880,28 +843,22 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   blockBodyBold: { color: '#fff', fontWeight: '700' },
-  blockActions: {
-    flexDirection: 'row',
+  // Full-width white pill button anchored at the bottom of the dark
+  // block card. High-contrast call to action — primary text is the
+  // dark surface color so it pops against the white pill.
+  unblockBtn: {
+    marginTop: spacing.lg,
+    paddingVertical: spacing.md + 2,
+    borderRadius: radius.pill,
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.md,
-    gap: spacing.lg,
   },
-  blockBtn: { paddingVertical: 6, paddingHorizontal: spacing.md },
-  blockSep: {
-    width: 1,
-    height: 18,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  blockBtnDanger: {
-    color: '#F87171',
+  unblockBtnText: {
+    color: colors.error,
     fontWeight: '700',
-    fontSize: fontSize.md,
-  },
-  blockBtnPrimary: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: fontSize.md,
+    fontSize: fontSize.md + 1,
+    letterSpacing: 0.2,
   },
 
   // ─── Input bar ────────────────────────────────────────────────────────

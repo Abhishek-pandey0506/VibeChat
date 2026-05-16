@@ -136,32 +136,25 @@ export function RoomListScreen({ onOpenRoom, onNewChat, onOpenProfile }: Props) 
   }, [rooms, currentUser.uid, profilesByUid]);
 
   const items = useMemo<RoomListItem[]>(() => {
-    return (
-      rooms
-        // Drop rooms the user has hidden via "Delete chat". They'll
-        // reappear automatically the moment anyone sends a new message
-        // (sendMessage clears hiddenBy on every write).
-        .filter(r => !(r.hiddenBy ?? []).includes(currentUser.uid))
-        .map(r => {
-          let title: string;
-          let otherUid: string | undefined;
-          let photoURL: string | undefined;
-          let peerEmail: string | undefined;
-          let peerPhone: string | undefined;
-          if (r.isGroup) {
-            title = r.name || 'Group chat';
-            photoURL = r.photoURL;
-          } else {
-            otherUid = r.participants.find(p => p !== currentUser.uid);
-            const other = otherUid ? profilesByUid[otherUid] : undefined;
-            title = other?.displayName || other?.email || 'Direct message';
-            photoURL = other?.photoURL;
-            peerEmail = other?.email;
-            peerPhone = other?.phoneNumber;
-          }
-          return { ...r, title, otherUid, photoURL, peerEmail, peerPhone };
-        })
-    );
+    return rooms.map(r => {
+      let title: string;
+      let otherUid: string | undefined;
+      let photoURL: string | undefined;
+      let peerEmail: string | undefined;
+      let peerPhone: string | undefined;
+      if (r.isGroup) {
+        title = r.name || 'Group chat';
+        photoURL = r.photoURL;
+      } else {
+        otherUid = r.participants.find(p => p !== currentUser.uid);
+        const other = otherUid ? profilesByUid[otherUid] : undefined;
+        title = other?.displayName || other?.email || 'Direct message';
+        photoURL = other?.photoURL;
+        peerEmail = other?.email;
+        peerPhone = other?.phoneNumber;
+      }
+      return { ...r, title, otherUid, photoURL, peerEmail, peerPhone };
+    });
   }, [rooms, profilesByUid, currentUser.uid]);
 
   // Total unread across all rooms — feeds the "Unread N" filter chip.
